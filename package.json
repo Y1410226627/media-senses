@@ -3,6 +3,14 @@
   "version": "0.3.0",
   "private": true,
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Y1410226627/media-senses.git"
+  },
+  "homepage": "https://github.com/Y1410226627/media-senses#readme",
+  "bugs": {
+    "url": "https://github.com/Y1410226627/media-senses/issues"
+  },
   "description": "Audio-visual senses, a reproduction loop, and live screen vision for text-only LLMs: learn a video genre from a corpus, build similar videos with ffmpeg + local TTS + headless-browser code animations, and watch the screen by keeping only the frames that changed.",
   "type": "module",
   "main": "index.js",
