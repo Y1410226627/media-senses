@@ -1,0 +1,212 @@
+{
+  "schema": "media-senses.style-profile/v1",
+  "name": "真实素材语料（公园/海滩/音乐）",
+  "generatedAt": "2026-11-12T17:43:44.659Z",
+  "count": 5,
+  "totalSeconds": 49,
+  "duration": {
+    "median": 5.76,
+    "min": 5,
+    "max": 19.16,
+    "p25": 5.72,
+    "p75": 13.35
+  },
+  "format": {
+    "aspect": "horizontal",
+    "aspectDistribution": {
+      "horizontal": 1
+    },
+    "resolutionMode": "640x360",
+    "fpsMode": 25,
+    "resolutions": {
+      "640x360": 0.8,
+      "1920x1080": 0.2
+    }
+  },
+  "pacing": {
+    "shotsMedian": 1,
+    "avgShotLengthMedian": 5.76,
+    "avgShotLengthP25": 5.72,
+    "avgShotLengthP75": 9.58,
+    "cutRateMedian": 0
+  },
+  "transitions": {
+    "hardCutShareMedian": 0,
+    "dominant": "gradual-mix"
+  },
+  "camera": {
+    "static": 1
+  },
+  "grading": {
+    "signatures": {
+      "high-contrast": 0.375,
+      "warm": 0.375,
+      "cool": 0.25
+    },
+    "temperature": {
+      "warm": 0.6,
+      "cool": 0.4
+    }
+  },
+  "sound": {
+    "musicRate": 0.2,
+    "speechRate": 0,
+    "bpmMedian": 100.3,
+    "bpmMin": 100.3,
+    "bpmMax": 100.3,
+    "keyMode": "F minor",
+    "loudnessMedian": -23.2,
+    "beatSyncMedian": 0
+  },
+  "overlays": {
+    "titleCardRate": 0,
+    "subtitleRate": 0,
+    "textDensityMedian": 0
+  },
+  "hook": {
+    "earlyCutRate": 0,
+    "titleFirst3sRate": 0,
+    "hookStrengthMedian": 0
+  },
+  "videos": [
+    {
+      "id": "clipB-60f165f122",
+      "file": "..\\..\\media\\clipB.mp4",
+      "duration": 13.35,
+      "shots": 1,
+      "avgShotLength": 13.35,
+      "aspect": "1.78:1",
+      "bpm": null,
+      "key": null,
+      "grading": [
+        "cool"
+      ],
+      "titleCard": false,
+      "subtitles": false
+    },
+    {
+      "id": "narrated-66c6512a5f",
+      "file": "..\\..\\media\\narrated.mp4",
+      "duration": 5.72,
+      "shots": 1,
+      "avgShotLength": 5.72,
+      "aspect": "1.78:1",
+      "bpm": null,
+      "key": "F minor",
+      "grading": [
+        "high-contrast",
+        "warm"
+      ],
+      "titleCard": false,
+      "subtitles": false
+    },
+    {
+      "id": "real-video-5s-music-f0eccf4813",
+      "file": "..\\..\\media\\real-video-5s-music.mp4",
+      "duration": 5,
+      "shots": 1,
+      "avgShotLength": 5,
+      "aspect": "1.78:1",
+      "bpm": 100.3,
+      "key": "C major",
+      "grading": [
+        "high-contrast",
+        "warm"
+      ],
+      "titleCard": false,
+      "subtitles": false
+    },
+    {
+      "id": "real-video-5s-a824634d63",
+      "file": "..\\..\\media\\real-video-5s.mp4",
+      "duration": 5.76,
+      "shots": 1,
+      "avgShotLength": 5.76,
+      "aspect": "1.78:1",
+      "bpm": null,
+      "key": "C minor",
+      "grading": [
+        "high-contrast",
+        "warm"
+      ],
+      "titleCard": false,
+      "subtitles": false
+    },
+    {
+      "id": "trailer-8117629dd1",
+      "file": "..\\..\\media\\trailer.mp4",
+      "duration": 19.16,
+      "shots": 2,
+      "avgShotLength": 9.58,
+      "aspect": "1.78:1",
+      "bpm": null,
+      "key": "F minor",
+      "grading": [
+        "cool"
+      ],
+      "titleCard": false,
+      "subtitles": false
+    }
+  ],
+  "reproduction": {
+    "checklist": [
+      "画幅用 横屏 640x360 @ 25fps。",
+      "样本以单镜头长镜头为主（80% 整条不切），平均长度 5.76 秒（多数落在 5.72–9.58 秒）；靠画面内运动和旁白推进，不要再加花哨转场。",
+      "没有可统计的镜头切换（多为单镜头素材），复刻时用一个长镜头即可。",
+      "运镜以「固定镜头」为主（100%），需要运动时把强度控制在低幅度。",
+      "调色标签：high-contrast（38%）、warm（38%），整体色温偏暖；保持低饱和与统一冷暖关系。",
+      "以人声/环境声为主，音乐只做低音量铺底或不用。",
+      "先生成完整分镜计划（每场景：类型/时长/文字/转场），再用 media_build_video 渲染；渲染后用 media_watch_video 复核节奏与调色是否落在上面的区间。"
+    ],
+    "brief": {
+      "note": "这是按样本统计自动生成的骨架：把（…）占位替换成真实内容/图片路径，时长可按需微调。",
+      "plan": {
+        "output": "（填写输出绝对路径，如 D:/out/replica.mp4）",
+        "width": 640,
+        "height": 360,
+        "fps": 25,
+        "loudnessTarget": -23.2,
+        "scenes": [
+          {
+            "type": "image",
+            "duration": 4.6,
+            "src": "（填写你的素材图绝对路径）",
+            "motion": "kenburns-in",
+            "fit": "cover",
+            "transitionIn": "cut",
+            "transitionDuration": 0
+          },
+          {
+            "type": "image",
+            "duration": 6.9,
+            "src": "（填写你的素材图绝对路径）",
+            "motion": "kenburns-in",
+            "fit": "cover",
+            "transitionIn": "fade",
+            "transitionDuration": 0.5
+          }
+        ],
+        "captions": [],
+        "audio": {
+          "voiceover": []
+        }
+      },
+      "targets": {
+        "avgShotLength": 5.76,
+        "cutRatePerMin": 0,
+        "hardCutShare": 0,
+        "bpm": 100.3,
+        "beatSync": 0,
+        "hookStrength": 0
+      }
+    },
+    "targets": {
+      "avgShotLength": 5.76,
+      "cutRatePerMin": 0,
+      "hardCutShare": 0,
+      "bpm": 100.3,
+      "beatSync": 0,
+      "hookStrength": 0
+    }
+  }
+}

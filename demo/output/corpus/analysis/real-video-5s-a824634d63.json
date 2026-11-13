@@ -1,0 +1,349 @@
+{
+  "id": "real-video-5s-a824634d63",
+  "file": "D:\\桌面\\装插件\\media-senses\\demo\\media\\real-video-5s.mp4",
+  "relative": "..\\..\\media\\real-video-5s.mp4",
+  "bytes": 2848208,
+  "status": "ok",
+  "analyzedAt": "2026-11-12T17:43:43.335Z",
+  "analysis": {
+    "duration": 5.76,
+    "stream": {
+      "codec": "h264",
+      "width": 1920,
+      "height": 1080,
+      "fps": 30,
+      "bitRate": 3857402,
+      "rotation": 0,
+      "pixelFormat": "yuv420p"
+    },
+    "format": {
+      "container": "mov,mp4,m4a,3gp,3g2,mj2",
+      "bitRate": 3956841,
+      "sizeBytes": 2848208
+    },
+    "global": {
+      "shotCount": 1,
+      "cutRate": 0,
+      "avgBrightness": 0.376,
+      "brightnessVariety": 0.005,
+      "avgSaturation": 0.063,
+      "colorfulness": 36.2,
+      "dominantHues": [
+        {
+          "name": "green",
+          "share": 0.919,
+          "hex": "#2f9e44"
+        },
+        {
+          "name": "cyan",
+          "share": 0.032,
+          "hex": "#15aabf"
+        },
+        {
+          "name": "blue",
+          "share": 0.031,
+          "hex": "#1971c2"
+        }
+      ],
+      "avgMotion": 1.1,
+      "peakMotion": 3.3,
+      "aspectRatio": "16:9"
+    },
+    "shots": [
+      {
+        "index": 0,
+        "start": 0,
+        "end": 5.76,
+        "duration": 5.76,
+        "brightness": 0.376,
+        "saturation": 0.063,
+        "hueName": "green",
+        "hueHex": "#58d629",
+        "motion": 1.1,
+        "palette": [
+          {
+            "hex": "#122913",
+            "share": 0.307
+          },
+          {
+            "hex": "#375626",
+            "share": 0.276
+          },
+          {
+            "hex": "#617b5b",
+            "share": 0.131
+          },
+          {
+            "hex": "#a2b39b",
+            "share": 0.1
+          }
+        ],
+        "layout": "high contrast / top brighter than bottom / left brighter than right / dark centre"
+      }
+    ],
+    "timeline": [
+      {
+        "t": 0,
+        "brightness": 0.371,
+        "saturation": 0.062,
+        "motion": 1.4
+      },
+      {
+        "t": 1.92,
+        "brightness": 0.378,
+        "saturation": 0.063,
+        "motion": 1.2
+      },
+      {
+        "t": 3.84,
+        "brightness": 0.382,
+        "saturation": 0.062,
+        "motion": 0.9
+      }
+    ],
+    "flags": {
+      "frozen": [],
+      "black": [],
+      "silent": [],
+      "likelyTextHeavy": true,
+      "likelyTalkingHead": false
+    },
+    "audio": {
+      "format": {
+        "codec": "aac",
+        "container": "mov,mp4,m4a,3gp,3g2,mj2",
+        "bitRate": 127998,
+        "channels": 2,
+        "sampleRate": 44100
+      },
+      "tempo": {
+        "bpm": null,
+        "bpmCandidates": [
+          112.3,
+          82,
+          70.8
+        ],
+        "confidence": 0.502,
+        "beatCount": 0,
+        "beatTimes": [],
+        "timeSignatureGuess": 4,
+        "regularity": 0
+      },
+      "key": {
+        "tonic": "C",
+        "mode": "minor",
+        "name": "C minor",
+        "confidence": 0.99,
+        "candidates": [
+          {
+            "name": "C minor",
+            "score": 0.852
+          },
+          {
+            "name": "C major",
+            "score": 0.646
+          },
+          {
+            "name": "F major",
+            "score": 0.47
+          }
+        ],
+        "tuned": 19.3
+      },
+      "loudness": {
+        "peakDbfs": -3.8,
+        "rmsDbfs": -26,
+        "lufsIntegrated": -26.8,
+        "loudnessRangeLu": 0.5,
+        "dynamicRangeDb": 0.6,
+        "clippingRatio": 0,
+        "silenceRatio": 0
+      },
+      "timbre": {
+        "centroidHz": 1476,
+        "rolloffHz": 3189,
+        "flatness": 0.006,
+        "zeroCrossRate": 0.038,
+        "brightness": "warm",
+        "description": "温暖、谐波型音色（频谱质心约 1476 Hz）。"
+      },
+      "spectrum": {
+        "lowRatio": 0.842,
+        "midRatio": 0.143,
+        "highRatio": 0.015
+      },
+      "rhythm": {
+        "onsetRate": 1.042,
+        "onsetsPerSecond": 1.042,
+        "percussionDensity": "sparse"
+      },
+      "sections": [
+        {
+          "start": 0,
+          "end": 5.76,
+          "duration": 5.76,
+          "label": "section 1",
+          "energy": 1,
+          "bpm": null,
+          "note": "片段过短，未做段落结构分析；节奏稀疏，音色偏暗沉。"
+        }
+      ],
+      "vocals": {
+        "present": false,
+        "confidence": 0.827,
+        "note": "启发式判断：人声线索不明显（4-8 Hz 调制偏弱，或中频主要被打击乐占据）。"
+      },
+      "mood": {
+        "arousal": 0.291,
+        "valence": 0.322,
+        "labels": [
+          "calm",
+          "dark",
+          "quiet"
+        ],
+        "note": "速度不明、响度偏低、小调色彩，整体听感偏平静、阴郁。"
+      }
+    },
+    "warnings": [
+      "no scene changes detected; the density floor produced the reported shots"
+    ]
+  },
+  "craft": {
+    "cutRhythm": {
+      "shotCount": 1,
+      "avgShotLength": 5.76,
+      "medianShotLength": 5.76,
+      "shortestShot": 5.76,
+      "longestShot": 5.76,
+      "stdDev": 0,
+      "cutRatePerMin": 0,
+      "cutsPer10s": [
+        0
+      ]
+    },
+    "transitions": {
+      "hardCutShare": 0,
+      "gradualShare": 0,
+      "list": []
+    },
+    "camera": [
+      {
+        "shotIndex": 0,
+        "motion": "static",
+        "intensity": 0.053
+      }
+    ],
+    "grading": {
+      "contrast": 0.28,
+      "saturation": 0.531,
+      "temperature": "warm",
+      "shadowTint": "neutral",
+      "highlightTint": "warm",
+      "signature": [
+        "high-contrast",
+        "warm"
+      ]
+    },
+    "overlays": {
+      "textDensity": 0,
+      "likelySubtitles": false,
+      "likelyTitleCard": false,
+      "topBandDetail": 0.493,
+      "bottomBandDetail": 0.319
+    },
+    "hook": {
+      "hasEarlyCut": false,
+      "hasTitleInFirst3s": false,
+      "firstShotMotion": "static",
+      "hookStrength": 0
+    },
+    "beatSync": {
+      "bpm": null,
+      "cutsOnBeatRatio": null,
+      "meanOffsetMs": null,
+      "note": "cut-to-beat sync is not measurable: no reliable beat grid was detected"
+    },
+    "sections": [
+      {
+        "start": 0,
+        "end": 5.76,
+        "role": "intro",
+        "avgShotLength": 5.76
+      }
+    ],
+    "titleCard": {
+      "present": false,
+      "at": null,
+      "duration": null,
+      "style": null
+    },
+    "warnings": [
+      "craft: only one shot was detected; transition and section statistics are degenerate",
+      "craft: only one shot was detected, so there are no shot boundaries to classify"
+    ]
+  },
+  "recipe": {
+    "schema": "media-senses.recipe/v1",
+    "duration": 5.76,
+    "aspect": "16:9",
+    "resolution": {
+      "width": 1920,
+      "height": 1080
+    },
+    "fps": 30,
+    "shots": [
+      {
+        "index": 1,
+        "start": 0,
+        "end": 5.76,
+        "duration": 5.76,
+        "camera": "static",
+        "brightness": 0.376,
+        "palette": [
+          "#122913",
+          "#375626",
+          "#617b5b"
+        ],
+        "transitionIn": "cut"
+      }
+    ],
+    "look": {
+      "palette": [
+        "#102c11",
+        "#04130a",
+        "#304f2d",
+        "#f7faf8"
+      ],
+      "grading": [
+        "high-contrast",
+        "warm"
+      ],
+      "temperature": "warm",
+      "textDensity": 0,
+      "titleCard": null
+    },
+    "sound": {
+      "hasMusic": true,
+      "bpm": null,
+      "key": "C minor",
+      "hasSpeech": false,
+      "speechKind": "none",
+      "musicDb": -26.8
+    },
+    "pacing": {
+      "avgShotLength": 5.76,
+      "cutRatePerMin": 0,
+      "beatSync": null
+    },
+    "reproductionNotes": [
+      "用 1 个镜头撑满 5.76 秒（镜头长约 5.76 秒），中间不要切。",
+      "所有镜头都用固定机位，画面几乎不动（全局位移小于 0.3 像素/帧），不要加推拉摇移。",
+      "按原片调色：高对比、整体偏暖（对比度 0.28、饱和度 0.531，高光偏暖）。",
+      "配乐没有稳定节拍，不要卡点，按画面和叙事节奏切。",
+      "用一条配乐铺满全片，音量约 -26.8 dBFS，让音乐承担情绪。",
+      "成片按 横屏 16:9、1920×1080、30 fps 输出，画幅比例对齐原片。"
+    ]
+  },
+  "transcript": null,
+  "warnings": []
+}

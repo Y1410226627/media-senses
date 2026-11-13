@@ -1,0 +1,7 @@
+- insert:
+    - id: media-senses
+      name: '@local/media-senses'
+      config:
+        ffmpegPath: ''
+        ffprobePath: ''
+        whisperModel: tiny

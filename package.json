@@ -1,0 +1,34 @@
+{
+  "name": "@local/media-senses",
+  "version": "0.3.0",
+  "private": true,
+  "license": "MIT",
+  "description": "Audio-visual senses, a reproduction loop, and live screen vision for text-only LLMs: learn a video genre from a corpus, build similar videos with ffmpeg + local TTS + headless-browser code animations, and watch the screen by keeping only the frames that changed.",
+  "type": "module",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "lib/*.js",
+    "bin/*",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "THIRD-PARTY.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}
+

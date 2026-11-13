@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Media Senses",
+    "description": "Eyes, ears, live screen vision and a reproduction loop for a text-only LLM: learn a video genre from a corpus, build similar videos with ffmpeg + local TTS + 341 headless-browser code animations, and watch the screen keeping only the frames that actually changed. Zero npm dependencies, fully offline."
+  }
+}

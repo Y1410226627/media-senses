@@ -1,0 +1,165 @@
+{
+  "craft": {
+    "cutRhythm": {
+      "shotCount": 2,
+      "avgShotLength": 9.58,
+      "medianShotLength": 9.58,
+      "shortestShot": 5.76,
+      "longestShot": 13.4,
+      "stdDev": 3.82,
+      "cutRatePerMin": 3.13,
+      "cutsPer10s": [
+        1,
+        0
+      ]
+    },
+    "transitions": {
+      "hardCutShare": 1,
+      "gradualShare": 0,
+      "list": [
+        {
+          "at": 5.76,
+          "kind": "cut",
+          "confidence": 0.98
+        }
+      ]
+    },
+    "camera": [
+      {
+        "shotIndex": 0,
+        "motion": "static",
+        "intensity": 0.158
+      },
+      {
+        "shotIndex": 1,
+        "motion": "static",
+        "intensity": 0
+      }
+    ],
+    "grading": {
+      "contrast": 0.245,
+      "saturation": 0.265,
+      "temperature": "cool",
+      "shadowTint": "neutral",
+      "highlightTint": "cool",
+      "signature": [
+        "cool"
+      ]
+    },
+    "overlays": {
+      "textDensity": 0,
+      "likelySubtitles": false,
+      "likelyTitleCard": false,
+      "topBandDetail": 0.199,
+      "bottomBandDetail": 0.174
+    },
+    "hook": {
+      "hasEarlyCut": false,
+      "hasTitleInFirst3s": false,
+      "firstShotMotion": "static",
+      "hookStrength": 0
+    },
+    "beatSync": {
+      "bpm": null,
+      "cutsOnBeatRatio": null,
+      "meanOffsetMs": null,
+      "note": "cut-to-beat sync is not measurable: no reliable beat grid was detected"
+    },
+    "sections": [
+      {
+        "start": 0,
+        "end": 5.76,
+        "role": "intro",
+        "avgShotLength": 5.76
+      },
+      {
+        "start": 5.76,
+        "end": 19.16,
+        "role": "outro",
+        "avgShotLength": 13.4
+      }
+    ],
+    "titleCard": {
+      "present": false,
+      "at": null,
+      "duration": null,
+      "style": null
+    },
+    "warnings": []
+  },
+  "recipe": {
+    "schema": "media-senses.recipe/v1",
+    "duration": 19.16,
+    "aspect": "16:9",
+    "resolution": {
+      "width": 640,
+      "height": 360
+    },
+    "fps": 25,
+    "shots": [
+      {
+        "index": 1,
+        "start": 0,
+        "end": 5.76,
+        "duration": 5.76,
+        "camera": "static",
+        "brightness": 0.377,
+        "palette": [
+          "#122913",
+          "#375629",
+          "#637b5d"
+        ],
+        "transitionIn": "cut"
+      },
+      {
+        "index": 2,
+        "start": 5.76,
+        "end": 19.16,
+        "duration": 13.4,
+        "camera": "static",
+        "brightness": 0.713,
+        "palette": [
+          "#b3b6b6",
+          "#c5d0eb",
+          "#856455"
+        ],
+        "transitionIn": "cut"
+      }
+    ],
+    "look": {
+      "palette": [
+        "#cdc8b2",
+        "#c9d3ea",
+        "#b7c6ea",
+        "#acb7c6"
+      ],
+      "grading": [
+        "cool"
+      ],
+      "temperature": "cool",
+      "textDensity": 0,
+      "titleCard": null
+    },
+    "sound": {
+      "hasMusic": true,
+      "bpm": null,
+      "key": "F minor",
+      "hasSpeech": false,
+      "speechKind": "none",
+      "musicDb": -22.3
+    },
+    "pacing": {
+      "avgShotLength": 9.58,
+      "cutRatePerMin": 3.13,
+      "beatSync": null
+    },
+    "reproductionNotes": [
+      "慢节奏：全片 2 个镜头、平均每镜 9.58 秒，镜头尽量拉长，整片只切 1 刀。",
+      "所有镜头都用固定机位，画面几乎不动（全局位移小于 0.3 像素/帧），不要加推拉摇移。",
+      "镜头之间全部用硬切，不加淡入淡出或其他转场。",
+      "按原片调色：整体偏冷（对比度 0.245、饱和度 0.265，高光偏冷）。",
+      "配乐没有稳定节拍，不要卡点，按画面和叙事节奏切。",
+      "用一条配乐铺满全片，音量约 -22.3 dBFS，让音乐承担情绪。"
+    ]
+  }
+}

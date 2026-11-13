@@ -1,0 +1,193 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>水墨 · 代码动画（media-senses 仿制示例）</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: #0d0f10; overflow: hidden; }
+  canvas { display: block; width: 100vw; height: 100vh; }
+</style>
+<canvas id="scene"></canvas>
+<script>
+/**
+ * 水墨风格代码动画 —— 遵循 code-animation-prompts 的渲染接口：
+ *   window.renderAt(t)  由秒数 t 唯一决定画面（确定性，可逐帧导出）
+ *   带 ?export=1 时不启动实时循环
+ */
+const canvas = document.querySelector('canvas');
+const ctx = canvas.getContext('2d', { alpha: false });
+const params = new URLSearchParams(location.search);
+const isExport = params.get('export') === '1';
+
+const config = {
+  title: '看 · 听 · 仿',
+  subtitle: 'CODE → MOTION',
+  paper: '#efeae0',
+  ink: '#141414',
+  accent: '#8b1a1a',
+  duration: 8,
+};
+
+// 固定种子伪随机：同一 t 永远得到同一画面
+function rand(seed) {
+  let x = Math.sin(seed * 12.9898) * 43758.5453;
+  return x - Math.floor(x);
+}
+
+// 缓慢漂移的墨团
+function inkBlot(cx, cy, radius, alpha, seed, t) {
+  const drift = t * (0.6 + rand(seed) * 0.8);
+  const x = cx + Math.sin(seed + drift) * radius * 0.18;
+  const y = cy + Math.cos(seed * 1.7 + drift) * radius * 0.12;
+  const r = radius * (0.85 + Math.sin(t * 0.6 + seed) * 0.12);
+  const gradient = ctx.createRadialGradient(x, y, 0, x, y, r);
+  const jitter = rand(seed * 3.1);
+  gradient.addColorStop(0, `rgba(20,20,20,${alpha})`);
+  gradient.addColorStop(0.55 + jitter * 0.15, `rgba(28,28,30,${alpha * 0.45})`);
+  gradient.addColorStop(1, 'rgba(239,234,224,0)');
+  ctx.fillStyle = gradient;
+  ctx.beginPath();
+  ctx.ellipse(x, y, r, r * (0.7 + jitter * 0.5), seed * 2.1, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// 横向拉长的飞白笔触
+function brushStroke(y, t, seed, width, alpha) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = 'rgba(20,20,22,0.85)';
+  ctx.lineCap = 'round';
+  ctx.lineWidth = 2 + rand(seed) * 5;
+  ctx.beginPath();
+  const progress = Math.min(1, Math.max(0, (t - seed * 0.4) / 2.6));
+  const from = -width * 0.1;
+  const to = from + width * (0.2 + progress * 0.9);
+  for (let x = from; x <= to; x += 6) {
+    const wobble = Math.sin((x / width) * 12 + t * 1.4 + seed * 5) * 5;
+    const yy = y + wobble + Math.sin(x * 0.01 + seed) * 3;
+    if (x === from) ctx.moveTo(x, yy);
+    else ctx.lineTo(x, yy);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+let paperCache = null;
+let paperSize = '';
+function drawPaper(w, h) {
+  if (paperCache === null || paperSize !== w + 'x' + h) {
+    const off = document.createElement('canvas');
+    off.width = w; off.height = h;
+    const octx = off.getContext('2d', { alpha: false });
+    octx.fillStyle = config.paper;
+    octx.fillRect(0, 0, w, h);
+    for (let i = 0; i < 1400; i += 1) {
+      const x = rand(i * 1.11) * w;
+      const y = rand(i * 2.37) * h;
+      const dark = rand(i * 3.73) > 0.72;
+      octx.fillStyle = dark ? 'rgba(60,54,46,0.06)' : 'rgba(255,255,255,0.16)';
+      octx.fillRect(x, y, 1.6, 1.6);
+    }
+    const edge = octx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.max(w, h) * 0.75);
+    edge.addColorStop(0, 'rgba(239,234,224,0)');
+    edge.addColorStop(1, 'rgba(120,110,96,0.30)');
+    octx.fillStyle = edge;
+    octx.fillRect(0, 0, w, h);
+    paperCache = off;
+    paperSize = w + 'x' + h;
+  }
+  ctx.drawImage(paperCache, 0, 0);
+  return;
+  // 纸纹：固定种子的斑点
+  for (let i = 0; i < 1400; i += 1) {
+    const x = rand(i * 1.11) * w;
+    const y = rand(i * 2.37) * h;
+    const dark = rand(i * 3.73) > 0.72;
+    ctx.fillStyle = dark ? 'rgba(60,54,46,0.06)' : 'rgba(255,255,255,0.16)';
+    ctx.fillRect(x, y, 1.4, 1.4);
+  }
+  // 边缘晕染
+  const edge = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.35, w / 2, h / 2, Math.max(w, h) * 0.75);
+  edge.addColorStop(0, 'rgba(239,234,224,0)');
+  edge.addColorStop(1, 'rgba(120,110,96,0.30)');
+  ctx.fillStyle = edge;
+  ctx.fillRect(0, 0, w, h);
+}
+
+function draw(t) {
+  const w = canvas.width = Math.round(innerWidth);
+  const h = canvas.height = Math.round(innerHeight);
+  const scale = Math.min(w / 1080, h / 1920);
+  drawPaper(w, h);
+
+  // 墨团层
+  inkBlot(w * 0.32, h * 0.26, Math.min(w, h) * 0.20, 0.42, 1.3, t);
+  inkBlot(w * 0.68, h * 0.33, Math.min(w, h) * 0.26, 0.36, 4.7, t);
+  inkBlot(w * 0.45, h * 0.62, Math.min(w, h) * 0.30, 0.30, 8.1, t);
+  inkBlot(w * 0.76, h * 0.78, Math.min(w, h) * 0.18, 0.34, 11.9, t);
+
+  // 飞白笔触
+  brushStroke(h * 0.44, t, 0.6, w, 0.55);
+  brushStroke(h * 0.47, t, 2.2, w, 0.40);
+  brushStroke(h * 0.86, t, 3.9, w, 0.35);
+
+  // 红色印章
+  const sealIn = Math.min(1, Math.max(0, (t - 2.4) / 0.8));
+  if (sealIn > 0) {
+    ctx.save();
+    ctx.globalAlpha = sealIn;
+    ctx.translate(w * 0.82, h * 0.90);
+    ctx.fillStyle = config.accent;
+    const s = Math.min(w, h) * 0.075;
+    ctx.fillRect(-s / 2, -s / 2, s, s);
+    ctx.fillStyle = config.paper;
+    ctx.font = `${s * 0.52}px "SimSun", "Microsoft YaHei", serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('仿', 0, s * 0.02);
+    ctx.restore();
+  }
+
+  // 标题
+  const titleIn = Math.min(1, Math.max(0, (t - 0.6) / 1.4));
+  const titleOut = Math.min(1, Math.max(0, (t - 6.4) / 1.2));
+  const titleAlpha = titleIn * (1 - titleOut);
+  if (titleAlpha > 0.001) {
+    ctx.save();
+    ctx.globalAlpha = titleAlpha;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = config.ink;
+    ctx.font = `bold ${Math.round(150 * scale)}px "Microsoft YaHei", "PingFang SC", sans-serif`;
+    ctx.letterSpacing = `${Math.round(10 * scale)}px`;
+    ctx.fillText(config.title, w / 2, h / 2, w * 0.86);
+    ctx.fillStyle = 'rgba(139,26,26,0.9)';
+    ctx.font = `${Math.round(34 * scale)}px Arial, sans-serif`;
+    ctx.fillText(config.subtitle, w / 2, h / 2 + 140 * scale);
+    ctx.restore();
+  }
+
+  // 结尾淡出（画面边缘压暗）
+  const fadeOut = Math.min(1, Math.max(0, (t - (config.duration - 1.1)) / 1.1));
+  if (fadeOut > 0) {
+    ctx.fillStyle = `rgba(13,15,16,${fadeOut * 0.92})`;
+    ctx.fillRect(0, 0, w, h);
+  }
+}
+
+window.renderAt = async function renderAt(t) {
+  draw(t);
+};
+
+if (!isExport) {
+  const start = performance.now();
+  const loop = () => {
+    draw(((performance.now() - start) / 1000) % config.duration);
+    requestAnimationFrame(loop);
+  };
+  loop();
+}
+</script>
+</html>
+

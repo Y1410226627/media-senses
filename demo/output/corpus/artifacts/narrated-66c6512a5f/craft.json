@@ -1,0 +1,138 @@
+{
+  "craft": {
+    "cutRhythm": {
+      "shotCount": 1,
+      "avgShotLength": 5.72,
+      "medianShotLength": 5.72,
+      "shortestShot": 5.72,
+      "longestShot": 5.72,
+      "stdDev": 0,
+      "cutRatePerMin": 0,
+      "cutsPer10s": [
+        0
+      ]
+    },
+    "transitions": {
+      "hardCutShare": 0,
+      "gradualShare": 0,
+      "list": []
+    },
+    "camera": [
+      {
+        "shotIndex": 0,
+        "motion": "static",
+        "intensity": 0.105
+      }
+    ],
+    "grading": {
+      "contrast": 0.279,
+      "saturation": 0.516,
+      "temperature": "warm",
+      "shadowTint": "neutral",
+      "highlightTint": "warm",
+      "signature": [
+        "high-contrast",
+        "warm"
+      ]
+    },
+    "overlays": {
+      "textDensity": 0,
+      "likelySubtitles": false,
+      "likelyTitleCard": false,
+      "topBandDetail": 0.49,
+      "bottomBandDetail": 0.316
+    },
+    "hook": {
+      "hasEarlyCut": false,
+      "hasTitleInFirst3s": false,
+      "firstShotMotion": "static",
+      "hookStrength": 0
+    },
+    "beatSync": {
+      "bpm": null,
+      "cutsOnBeatRatio": null,
+      "meanOffsetMs": null,
+      "note": "cut-to-beat sync is not measurable: no reliable beat grid was detected"
+    },
+    "sections": [
+      {
+        "start": 0,
+        "end": 5.72,
+        "role": "intro",
+        "avgShotLength": 5.72
+      }
+    ],
+    "titleCard": {
+      "present": false,
+      "at": null,
+      "duration": null,
+      "style": null
+    },
+    "warnings": [
+      "craft: only one shot was detected; transition and section statistics are degenerate",
+      "craft: only one shot was detected, so there are no shot boundaries to classify"
+    ]
+  },
+  "recipe": {
+    "schema": "media-senses.recipe/v1",
+    "duration": 5.72,
+    "aspect": "16:9",
+    "resolution": {
+      "width": 640,
+      "height": 360
+    },
+    "fps": 25,
+    "shots": [
+      {
+        "index": 1,
+        "start": 0,
+        "end": 5.72,
+        "duration": 5.72,
+        "camera": "static",
+        "brightness": 0.379,
+        "palette": [
+          "#132914",
+          "#375629",
+          "#61795c"
+        ],
+        "transitionIn": "cut"
+      }
+    ],
+    "look": {
+      "palette": [
+        "#102c11",
+        "#04130a",
+        "#304f2d",
+        "#f7faf9"
+      ],
+      "grading": [
+        "high-contrast",
+        "warm"
+      ],
+      "temperature": "warm",
+      "textDensity": 0,
+      "titleCard": null
+    },
+    "sound": {
+      "hasMusic": true,
+      "bpm": null,
+      "key": "F minor",
+      "hasSpeech": false,
+      "speechKind": "none",
+      "musicDb": -15.4
+    },
+    "pacing": {
+      "avgShotLength": 5.72,
+      "cutRatePerMin": 0,
+      "beatSync": null
+    },
+    "reproductionNotes": [
+      "用 1 个镜头撑满 5.72 秒（镜头长约 5.72 秒），中间不要切。",
+      "所有镜头都用固定机位，画面几乎不动（全局位移小于 0.3 像素/帧），不要加推拉摇移。",
+      "按原片调色：高对比、整体偏暖（对比度 0.279、饱和度 0.516，高光偏暖）。",
+      "配乐没有稳定节拍，不要卡点，按画面和叙事节奏切。",
+      "用一条配乐铺满全片，音量约 -15.4 dBFS，让音乐承担情绪。",
+      "成片按 横屏 16:9、640×360、25 fps 输出，画幅比例对齐原片。"
+    ]
+  }
+}
