@@ -36,6 +36,8 @@ import { artifactDir, formatBytes, formatTimecode, makeWorkDir, probe, removeWor
 import { renderAudioReport, renderFrameReport, renderProbeReport, renderVideoReport } from './lib/render.js'
 import { renderAnimateReport, renderBuildReport, renderChangeSection, renderCorpusReport, renderCraftSection, renderSeeReport, renderStylesReport, renderTtsReport } from './lib/render-v2.js'
 import { getStyle, resolveSkillDir, searchStyles, seriesOverview, starterPath } from './lib/styles.js'
+import { attachImages, detectVision, profileWidth, sampleTimes, VISION_PROFILES } from './lib/vision.js'
+import { renderCompareReport, renderFramesReport } from './lib/render-vision.js'
 
 export const name = 'media-senses'
 export const inject = ['tools']
@@ -58,6 +60,9 @@ const DEFAULTS = {
   corpusDir: '',
   allowScreenCapture: true,
   screenQuality: 'low',
+  visionMode: 'auto',
+  visionImageProfile: 'balanced',
+  visionMaxImages: 4,
 }
 
 const TEXT_OUTPUT_SCHEMA = { type: 'object', additionalProperties: true }
@@ -222,6 +227,7 @@ export function apply(ctx, rawConfig) {
       additionalProperties: false,
       properties: {
         path: { type: 'string', description: '视频文件绝对路径。' },
+        mode: { type: 'string', enum: ['auto', 'blind', 'vision'], description: '呈现模式：auto 按当前模型能力自动选择（默认）；blind 只给文本；vision 以图为主。' },
         start: { type: 'number', description: '从第几秒开始分析（默认 0）。' },
         duration: { type: 'number', description: '只分析这一段时长（秒），默认全片，上限由配置 videoMaxSeconds 决定。' },
         max_keyframes: { type: 'integer', description: '最多抽取多少个关键帧/镜头明细（默认 36，上限 60）。' },
@@ -361,11 +367,73 @@ export function apply(ctx, rawConfig) {
           }
         }
 
-        let report = renderVideoReport(analysis, { file: input.path, detail: detailOf(args), transcript: analysis.transcript?.text ?? null, asrNotes: notes })
-        if (craft !== null) report += `\n\n${renderCraftSection(craft, recipe)}`
-        if (change !== null) report += `\n\n${renderChangeSection(change)}`
-        const images = await inlineImages(exec, [{ path: analysis.artifacts?.contactSheet, name: 'media-senses-contact-sheet.png' }])
-        const note = images.length > 0 ? '\n\n> 本次结果末尾已直接附带**联系表图像**（按镜头顺序排列、带时间码水印）。直接看图即可复核上面的镜头表；需要某一刻的高清原图时再调 `media_frame`。' : ''
+        // Vision target: when the current model can see, lead with pictures and an
+        // index instead of ASCII art. The filmstrip gives temporal order that a
+        // contact sheet loses; the contact sheet still shows every shot.
+        const vision = await visionFor(exec, args)
+        const target = targetOf(vision)
+        const imagePlan = []
+        const imageEntries = []
+        const shotsForPlan = Array.isArray(analysis.shots) ? analysis.shots : []
+        if (target === 'vision' && shotsForPlan.length > 0) {
+          imagePlan.push({
+            kind: 'contact-sheet',
+            caption: `联系表：${shotsForPlan.length} 个镜头格，按左上→右下排列，格内带时间码水印`,
+            cells: shotsForPlan.map((shot, index) => ({ index: index + 1, time: Math.round(Number(shot.start ?? 0) * 100) / 100, timecode: formatTimecode(Number(shot.start ?? 0)) })),
+          })
+          imageEntries.push({ path: analysis.artifacts?.contactSheet, name: 'media-senses-contact-sheet.png', kind: 'contact-sheet' })
+          if (shotsForPlan.length > 1) {
+            try {
+              const { buildFilmstrip } = await import('./lib/montage.js')
+              const times = sampleTimes(Number(analysis.duration ?? 0) > 0 ? 0 : 0, Number(analysis.duration ?? 0) || 1, 3)
+              const strip = await buildFilmstrip({
+                tools: resolved,
+                file: input.path,
+                times,
+                workDir,
+                outputPath: join(outDir, 'filmstrip-video.png'),
+                width: profileWidth(vision.profile, 'filmstrip'),
+                columns: 3,
+              })
+              imagePlan.push({
+                kind: 'filmstrip',
+                caption: '时间条：首/中/尾三帧，从左到右推进',
+                cells: (strip.cells ?? []).map((cell) => ({ index: cell.index, time: cell.time, timecode: cell.timecode })),
+              })
+              imageEntries.push({ path: strip.path, name: 'media-senses-filmstrip.png', kind: 'filmstrip' })
+            } catch (error) {
+              notes.push(`时间条生成失败（${error instanceof Error ? error.message : String(error)}）`)
+            }
+          }
+        } else {
+          imageEntries.push({ path: analysis.artifacts?.contactSheet, name: 'media-senses-contact-sheet.png', kind: 'contact-sheet' })
+        }
+
+        // Report assembly: in vision mode the craft/change blocks go into the
+        // renderer's appendix so the observation checklist stays the final section.
+        const craftSection = craft !== null ? renderCraftSection(craft, recipe) : ''
+        const changeSection = change !== null ? renderChangeSection(change, { target }) : ''
+        let report = renderVideoReport(analysis, {
+          file: input.path,
+          detail: detailOf(args),
+          transcript: analysis.transcript?.text ?? null,
+          asrNotes: notes,
+          target,
+          imagePlan,
+          ...(target === 'vision' ? { appendix: [craftSection, changeSection].filter((part) => part.length > 0) } : {}),
+        })
+        if (target !== 'vision') {
+          if (craftSection.length > 0) report += `\n\n${craftSection}`
+          if (changeSection.length > 0) report += `\n\n${changeSection}`
+        }
+        const attached = await attachFor(exec, imageEntries, vision)
+        const images = attached.images
+        for (const noteText of attached.notes) notes.push(noteText)
+        // In vision mode the renderer already announced the embedded images; a
+        // trailing note would break its contract that the checklist comes last.
+        const note = images.length > 0 && target !== 'vision'
+          ? '\n\n> 本次结果末尾已直接附带**联系表图像**（按镜头顺序排列、带时间码水印）。直接看图即可复核上面的镜头表；需要某一刻的高清原图时再调 `media_frame`。'
+          : ''
         const elapsed = Math.round((Date.now() - startedAt) / 100) / 10
         return {
           kind: 'video',
@@ -380,6 +448,8 @@ export function apply(ctx, rawConfig) {
           craft,
           recipe,
           change,
+          vision: { active: vision.active, target, profile: vision.profile, reason: vision.reason, images: images.length },
+          image_plan: imagePlan,
           report: report + note,
         }
       } finally {
@@ -406,6 +476,7 @@ export function apply(ctx, rawConfig) {
       additionalProperties: false,
       properties: {
         path: { type: 'string', description: '音频（或带音轨的视频）文件的绝对路径。' },
+        mode: { type: 'string', enum: ['auto', 'blind', 'vision'], description: '呈现模式：auto 按当前模型能力自动选择（默认）；blind 只给文本；vision 以图为主。' },
         start: { type: 'number', description: '从第几秒开始分析（默认 0）。' },
         duration: { type: 'number', description: '分析时长（秒），默认全曲，上限由配置 audioMaxSeconds 决定。' },
         include_chords: { type: 'boolean', description: '是否做和弦识别（默认 true）。' },
@@ -477,11 +548,20 @@ export function apply(ctx, rawConfig) {
         }
         mergeTranscript(analysis, transcript, notes)
 
-        const report = renderAudioReport(analysis, { file: input.path, detail: detailOf(args), transcript: transcript?.text ?? null, asrNotes: notes })
-        const images = await inlineImages(exec, [
-          { path: analysis.artifacts?.spectrogram, name: 'media-senses-spectrogram.png' },
-          { path: analysis.artifacts?.waveform, name: 'media-senses-waveform.png' },
-        ])
+        const vision = await visionFor(exec, args)
+        const target = targetOf(vision)
+        const imagePlan = target === 'vision'
+          ? [
+              { kind: 'spectrogram', caption: '频谱图：横轴时间、纵轴频率，颜色越亮能量越强；低频节奏与高频泛音都看得出来' },
+              ...(analysis.artifacts?.waveform ? [{ kind: 'waveform', caption: '波形图：整体响度包络与段落能量变化' }] : []),
+            ]
+          : []
+        const report = renderAudioReport(analysis, { file: input.path, detail: detailOf(args), transcript: transcript?.text ?? null, asrNotes: notes, target, imagePlan })
+        const attached = await attachFor(exec, [
+          { path: analysis.artifacts?.spectrogram, name: 'media-senses-spectrogram.png', kind: 'spectrogram' },
+          { path: analysis.artifacts?.waveform, name: 'media-senses-waveform.png', kind: 'waveform' },
+        ], vision)
+        const images = attached.images
         const elapsed = Math.round((Date.now() - startedAt) / 100) / 10
         return {
           kind: 'audio',
@@ -493,6 +573,7 @@ export function apply(ctx, rawConfig) {
           artifacts: analysis.artifacts ?? {},
           elapsed_seconds: elapsed,
           images,
+          vision: { active: vision.active, target, profile: vision.profile, reason: vision.reason },
           report,
         }
       } finally {
@@ -520,6 +601,9 @@ export function apply(ctx, rawConfig) {
       properties: {
         path: { type: 'string', description: '视频或图片文件的绝对路径。' },
         time: { type: 'number', description: '时间点（秒）；图片文件可省略。' },
+        mode: { type: 'string', enum: ['auto', 'blind', 'vision'], description: '呈现模式：auto 按当前模型能力自动选择（默认）；blind 只给文本；vision 以图为主。' },
+        region: { type: 'string', description: '只截取一块区域（原图像素），格式 "x,y,w,h"；与 zoom 二选一。' },
+        zoom: { type: 'number', description: '中心放大倍数 1–8；看不清细节时用。' },
         output_dir: { type: 'string', description: '保存原图的目录；省略时写入系统临时目录。' },
         max_width: { type: 'integer', description: '导出原图的最大宽度像素（默认 960）。' },
       },
@@ -546,6 +630,10 @@ export function apply(ctx, rawConfig) {
 
       const outDir = await artifactDir(input.path, args.output_dir ?? config.outputDir)
       const workDir = await makeWorkDir('media-senses-frame')
+      const vision = await visionFor(exec, args)
+      const target = targetOf(vision)
+      const region = typeof args.region === 'string' ? args.region : undefined
+      const zoom = Number.isFinite(args.zoom) ? args.zoom : undefined
       try {
         const frame = await analyzeFrame({
           tools: resolved,
@@ -554,11 +642,30 @@ export function apply(ctx, rawConfig) {
           workDir,
           outputDir: outDir,
           isImage: imageLike,
+          region,
+          zoom,
           signal: exec?.signal,
-          options: { maxWidth: Math.min(Math.max(Number.isInteger(args.max_width) ? args.max_width : 960, 240), 1920) },
+          options: { maxWidth: Math.min(Math.max(Number.isInteger(args.max_width) ? args.max_width : (target === 'vision' ? 1600 : 960), 240), 2400) },
         })
-        const report = renderFrameReport(frame, { file: input.path, time, imagePath: frame.imagePath, isImage: imageLike })
-        const images = await inlineImages(exec, [{ path: frame.imagePath, name: imageLike ? 'media-senses-image.jpg' : 'media-senses-frame.jpg' }])
+        const imagePlan = target === 'vision'
+          ? [{
+              kind: 'detail',
+              caption: imageLike ? '原图已内嵌（可再用 region 取局部）' : `画面已内嵌${frame.crop?.kind === 'region' ? '（裁剪区域）' : frame.crop?.kind === 'zoom' ? '（中心放大）' : ''}`,
+              note: frame.imagePath ? undefined : '图片保存失败，只能给路径',
+            }]
+          : []
+        const report = renderFrameReport(frame, {
+          file: input.path,
+          time,
+          imagePath: frame.imagePath,
+          isImage: imageLike,
+          target,
+          imagePlan,
+          region,
+          zoom,
+        })
+        const attached = await attachFor(exec, [{ path: frame.imagePath, name: imageLike ? 'media-senses-image.jpg' : 'media-senses-frame.jpg', kind: 'detail' }], vision)
+        const images = attached.images
         return {
           kind: imageLike ? 'image' : 'video-frame',
           file: input.path,
@@ -568,7 +675,9 @@ export function apply(ctx, rawConfig) {
           brightness: frame.summary?.brightness ?? null,
           saturation: frame.summary?.saturation ?? null,
           edge_density: frame.summary?.edgeDensity ?? null,
+          crop: frame.crop ?? null,
           images,
+          vision: { active: vision.active, target, profile: vision.profile, reason: vision.reason },
           report,
         }
       } finally {
@@ -856,7 +965,38 @@ export function apply(ctx, rawConfig) {
             verifyError = error instanceof Error ? error.message : String(error)
           }
         }
-        const report = renderBuildReport(result, { plan, verify, verifyError, targets: args.targets })
+        // Vision target: a three-frame strip (head / middle / tail) lets the model
+        // judge the produced video with its own eyes instead of trusting numbers.
+        const vision = await visionFor(exec, args)
+        const target = targetOf(vision)
+        const imagePlan = []
+        const imageEntries = []
+        if (target === 'vision' && Number(result.duration) > 0) {
+          try {
+            const { buildFilmstrip } = await import('./lib/montage.js')
+            const times = sampleTimes(0, Number(result.duration), 3)
+            const strip = await buildFilmstrip({
+              tools: resolved,
+              file: result.output,
+              times,
+              workDir,
+              outputPath: join(workDir, 'preview-strip.png'),
+              width: profileWidth(vision.profile, 'filmstrip'),
+              columns: 3,
+            })
+            imagePlan.push({
+              kind: 'filmstrip',
+              caption: '成片段：首/中/尾三帧，从左到右',
+              cells: (strip.cells ?? []).map((cell) => ({ index: cell.index, time: cell.time, timecode: cell.timecode })),
+            })
+            imageEntries.push({ path: strip.path, name: 'media-senses-build-strip.png', kind: 'filmstrip' })
+          } catch (error) {
+            notes.push(`成片预览条生成失败（${error instanceof Error ? error.message : String(error)}）`)
+          }
+        }
+        const report = renderBuildReport(result, { plan, verify, verifyError, targets: args.targets, target, imagePlan })
+        const attached = await attachFor(exec, imageEntries, vision)
+        const images = attached.images
         return {
           kind: 'build',
           output: result.output,
@@ -868,6 +1008,8 @@ export function apply(ctx, rawConfig) {
           render_seconds: result.renderSeconds,
           verified: verify !== null,
           verify,
+          images,
+          vision: { active: vision.active, target, profile: vision.profile, reason: vision.reason },
           elapsed_seconds: Math.round((Date.now() - startedAt) / 100) / 10,
           report,
         }
@@ -1062,12 +1204,35 @@ export function apply(ctx, rawConfig) {
           browserPath: config.browserPath,
           signal: exec?.signal,
         })
-        // A preview still makes the generation loop visual: the model can look at
-        // a representative frame immediately instead of opening the mp4.
+        // A preview strip (head / middle / tail) makes the generation loop visual:
+        // the model sees the motion arc instead of a single frozen frame.
+        const vision = await visionFor(exec, args)
+        const target = targetOf(vision)
         previewPath = join(workDir, 'preview.jpg')
         await run(resolved.ffmpeg, ['-v', 'error', '-y', '-ss', String(Math.max(0, duration * 0.4)), '-i', output, '-frames:v', '1', '-q:v', '3', previewPath], { cwd: workDir })
-        const images = await inlineImages(exec, [{ path: previewPath, name: 'animation-preview.jpg' }])
-        const report = renderAnimateReport(result, { styleId: args.style_id, htmlPath, previewPath })
+        const imagePlan = []
+        const imageEntries = [{ path: previewPath, name: 'animation-preview.jpg', kind: 'preview' }]
+        if (target === 'vision' && Number(result.duration) > 0) {
+          try {
+            const { buildFilmstrip } = await import('./lib/montage.js')
+            const strip = await buildFilmstrip({
+              tools: resolved,
+              file: output,
+              times: sampleTimes(0, Number(result.duration), 3),
+              workDir,
+              outputPath: join(workDir, 'anim-strip.png'),
+              width: profileWidth(vision.profile, 'filmstrip'),
+              columns: 3,
+            })
+            imagePlan.push({ kind: 'filmstrip', caption: '动画首/中/尾三帧，从左到右', cells: (strip.cells ?? []).map((cell) => ({ index: cell.index, time: cell.time, timecode: cell.timecode })) })
+            imageEntries.unshift({ path: strip.path, name: 'media-senses-anim-strip.png', kind: 'filmstrip' })
+          } catch (error) {
+            imagePlan.push({ kind: 'preview', caption: `单帧预览${error instanceof Error ? `（三帧条失败：${error.message}）` : ''}` })
+          }
+        }
+        const attached = await attachFor(exec, imageEntries, vision)
+        const images = attached.images
+        const report = renderAnimateReport(result, { styleId: args.style_id, htmlPath, previewPath, target, imagePlan })
         return {
           kind: 'animate',
           output: result.output,
@@ -1079,6 +1244,7 @@ export function apply(ctx, rawConfig) {
           bytes: result.bytes,
           render_seconds: result.renderSeconds,
           images,
+          vision: { active: vision.active, target, profile: vision.profile, reason: vision.reason },
           report,
         }
       } finally {
@@ -1147,15 +1313,21 @@ export function apply(ctx, rawConfig) {
 
       await mkdir(outDir, { recursive: true })
       const workDir = await makeWorkDir('media-senses-see')
+      const vision = await visionFor(exec, args)
+      const target = targetOf(vision)
+      // A vision model reads text better from a bigger capture; a blind model only
+      // needs the 800 px raster for its ASCII rendering.
+      const captureWidth = target === 'vision' ? Math.max(longEdge, profileWidth(vision.profile, 'detail')) : longEdge
       let imagePath
       try {
         if (action === 'peek') {
-          const captured = await screenMod.captureFrames({ tools: resolved, workDir, options: { seconds: 0, width: longEdge, region: args.region, source: 'screen', outputDir: outDir }, signal: exec?.signal })
+          const captured = await screenMod.captureFrames({ tools: resolved, workDir, options: { seconds: 0, width: captureWidth, region: args.region, source: 'screen', outputDir: outDir }, signal: exec?.signal })
           const framePath = captured.frames?.[0]?.path
           if (typeof framePath !== 'string') throw new Error('屏幕采集没有产出画面（可能是锁屏 / UAC 安全桌面 / 远程桌面）')
           const frame = await analyzeFrame({ tools: resolved, file: framePath, time: 0, workDir, outputDir: outDir, isImage: true, signal: exec?.signal })
           imagePath = frame.imagePath ?? framePath
-          const images = await inlineImages(exec, [{ path: imagePath, name: 'media-senses-screen.png' }])
+          const attached = await attachFor(exec, [{ path: imagePath, name: 'media-senses-screen.png', kind: 'detail' }], vision)
+          const images = attached.images
           const report = renderSeeReport({
             action: 'peek',
             engine: captured.engine,
@@ -1166,8 +1338,10 @@ export function apply(ctx, rawConfig) {
             summary: frame.summary,
             ascii: frame.ascii,
             layout: frame.summary?.layout,
+            target,
+            imagePlan: target === 'vision' ? [{ kind: 'detail', caption: '当前屏幕截图已内嵌' }] : [],
           })
-          return { kind: 'see', action, image_path: imagePath, images, report }
+          return { kind: 'see', action, image_path: imagePath, images, vision: { active: vision.active, target, profile: vision.profile, reason: vision.reason }, report }
         }
 
         // watch: sample → change-score → keep the informative frames → pack.
@@ -1213,7 +1387,10 @@ export function apply(ctx, rawConfig) {
           outputPath: join(outDir, `sheet-${Date.now()}.png`),
         })
         imagePath = sheet.pngPath ?? sheet.path
-        const images = imagePath === undefined ? [] : await inlineImages(exec, [{ path: imagePath, name: 'media-senses-screen-sheet.png' }])
+        const attached = imagePath === undefined
+          ? { images: [], notes: [] }
+          : await attachFor(exec, [{ path: imagePath, name: 'media-senses-screen-sheet.png', kind: 'contact-sheet' }], vision)
+        const images = attached.images
         const report = renderSeeReport({
           action: 'watch',
           seconds,
@@ -1222,6 +1399,14 @@ export function apply(ctx, rawConfig) {
           height: captured.height,
           elapsedMs: captured.elapsedMs,
           region: args.region,
+          target,
+          imagePlan: target === 'vision'
+            ? [{
+                kind: 'contact-sheet',
+                caption: `屏幕变化拼图：${selected.length} 帧，按左上→右下排列`,
+                cells: selected.map((item, index) => ({ index: index + 1, time: Math.round((item.sourceTime ?? item.time) * 100) / 100, timecode: formatTimecode(item.sourceTime ?? item.time) })),
+              }]
+            : [],
           frameCount: ordered.length,
           kept: selected.length,
           selectionRule: scored === undefined ? '均匀采样' : '变化量（切点 + 积分）',
@@ -1251,6 +1436,198 @@ export function apply(ctx, rawConfig) {
     },
     presentCall(args) {
       return { card: 'generic', title: `See ${args.action ?? 'peek'}`, kind: 'read' }
+    },
+  })
+
+  /* ------------------------------------------------------------ media_frames */
+
+  ctx.tools.register({
+    name: 'media_frames',
+    description:
+      '一次取多个时间点的画面，拼成一条带帧号与时间码的横条（首/中/尾或任意时刻）。' +
+      '用于比较「这几秒里画面怎么变」；比逐个调 media_frame 少几次往返，视觉模型会直接拿到这张拼图。\n' +
+      'Grab several moments of one video at once and return them as a single labelled strip (head/middle/tail or any ' +
+      'timestamps) — for comparing how the picture changes over time. Fewer round-trips than calling media_frame ' +
+      'repeatedly; a vision model gets the strip directly.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        path: { type: 'string', description: '视频或图片文件绝对路径。' },
+        times: { type: 'array', items: { type: 'number' }, description: '要取的时间点（秒），最多 6 个；省略时在片长上均匀取 3 个。' },
+        mode: { type: 'string', enum: ['auto', 'blind', 'vision'], description: '呈现模式：auto 按当前模型能力自动选择（默认）。' },
+        width: { type: 'integer', description: '拼图宽度像素（默认按视觉档位 1260）。' },
+      },
+      required: ['path'],
+    },
+    output: { schema: TEXT_OUTPUT_SCHEMA, render: renderTextAndImages },
+    isConcurrencySafe: () => true,
+    timeoutMs: 240_000,
+    async execute(args, exec) {
+      const resolved = await tools()
+      const input = await locateInput(args.path, config)
+      const probed = await probe(resolved, input.path)
+      const summary = summariseProbe(probed)
+      const imageLike = isImageLike(summary)
+      if (!imageLike && classify(summary) !== 'video') throw new Error(`${args.path} 既不是视频也不是图片，无法取帧。`)
+      const duration = imageLike ? 0 : Number(summary.duration ?? 0)
+      const requested = Array.isArray(args.times)
+        ? args.times.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value >= 0).slice(0, 6)
+        : []
+      const times = requested.length > 0 ? requested : sampleTimes(0, duration || 1, imageLike ? 1 : 3)
+      const vision = await visionFor(exec, args)
+      const target = targetOf(vision)
+      const outDir = await artifactDir(input.path, config.outputDir)
+      const workDir = await makeWorkDir('media-senses-frames')
+      try {
+        const { buildFilmstrip } = await import('./lib/montage.js')
+        const strip = await buildFilmstrip({
+          tools: resolved,
+          file: input.path,
+          times,
+          workDir,
+          outputPath: join(outDir, `strip-${Date.now()}.png`),
+          width: Math.min(Math.max(Number.isInteger(args.width) ? args.width : profileWidth(vision.profile, 'filmstrip'), 420), 2400),
+          columns: Math.min(times.length, 3),
+        })
+        const attached = await attachFor(exec, [{ path: strip.path, name: 'media-senses-frames-strip.png', kind: 'filmstrip' }], vision)
+        const report = renderFramesReport({
+          file: input.path,
+          cells: strip.cells ?? times.map((time, index) => ({ index: index + 1, time, timecode: formatTimecode(time) })),
+          width: strip.width,
+          height: strip.height,
+          tokenEstimate: strip.tokenEstimate,
+          target,
+        })
+        return {
+          kind: 'frames',
+          file: input.path,
+          times,
+          cells: strip.cells ?? [],
+          strip_path: strip.path ?? null,
+          token_estimate: strip.tokenEstimate ?? null,
+          images: attached.images,
+          vision: { active: vision.active, target, profile: vision.profile, reason: vision.reason },
+          report,
+        }
+      } finally {
+        await removeWorkDir(workDir)
+      }
+    },
+    presentCall(args) {
+      return { card: 'generic', title: `Frames of ${args.path}`, kind: 'read', locations: [{ path: String(args.path) }] }
+    },
+  })
+
+  /* ----------------------------------------------------------- media_compare */
+
+  ctx.tools.register({
+    name: 'media_compare',
+    description:
+      '把「参考片」和「仿制成片」放在同一张对比图上（上下或左右），并给出逐项数值差异与判定。' +
+      '视觉模型可以据此回答「像不像、下一版改哪里」。这是仿制闭环的验收工具。\n' +
+      'Put a reference video and a produced copy side by side (stacked or side-by-side) and report per-metric ' +
+      'differences with match/close/diverge verdicts, so a vision model can judge "does it look like the reference, ' +
+      'and what should change next". This is the acceptance tool of the reproduction loop.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        reference: { type: 'string', description: '参考片绝对路径。' },
+        produced: { type: 'string', description: '仿制成片绝对路径。' },
+        ref_time: { type: 'number', description: '参考片取帧时间点（默认取 50% 处）。' },
+        built_time: { type: 'number', description: '成片取帧时间点（默认取 50% 处）。' },
+        layout: { type: 'string', enum: ['stack', 'side'], description: 'stack=上参考下成片（默认）；side=左参考右成片。' },
+        include_metrics: { type: 'boolean', description: '是否跑完整数值对比（需要分析两边，稍慢；默认 true）。' },
+        mode: { type: 'string', enum: ['auto', 'blind', 'vision'], description: '呈现模式：auto 按当前模型能力自动选择（默认）。' },
+      },
+      required: ['reference', 'produced'],
+    },
+    output: { schema: TEXT_OUTPUT_SCHEMA, render: renderTextAndImages },
+    isConcurrencySafe: () => false,
+    timeoutMs: 600_000,
+    async execute(args, exec) {
+      const resolved = await tools()
+      const reference = await locateInput(args.reference, config)
+      const produced = await locateInput(args.produced, config)
+      for (const item of [reference, produced]) {
+        const summary = summariseProbe(await probe(resolved, item.path))
+        if (classify(summary) !== 'video') throw new Error(`${item.path} 不是视频，无法对比。`)
+      }
+      const vision = await visionFor(exec, args)
+      const target = targetOf(vision)
+      const outDir = await artifactDir(reference.path, args.output_dir ?? config.outputDir)
+      const workDir = await makeWorkDir('media-senses-compare')
+      try {
+        const { buildComparePair, diffMetrics } = await import('./lib/montage.js')
+        let diff = { rows: [], summary: { match: 0, close: 0, diverge: 0, unknown: 0 }, verdict: 'unknown' }
+        let analysed = null
+        if (args.include_metrics !== false) {
+          try {
+            const refAnalysis = await analyzeVideo({
+              tools: resolved,
+              file: reference.path,
+              workDir,
+              options: { maxKeyframes: 6, wantContactSheet: false, wantFrames: true, wantAudio: true, artifactDir: join(workDir, 'ref') },
+              signal: exec?.signal,
+              analyzeAudio,
+            })
+            const builtAnalysis = await analyzeVideo({
+              tools: resolved,
+              file: produced.path,
+              workDir,
+              options: { maxKeyframes: 6, wantContactSheet: false, wantFrames: true, wantAudio: true, artifactDir: join(workDir, 'built') },
+              signal: exec?.signal,
+              analyzeAudio,
+            })
+            diff = diffMetrics(refAnalysis, builtAnalysis)
+            analysed = { refDuration: refAnalysis.duration, builtDuration: builtAnalysis.duration }
+          } catch (error) {
+            diff = { rows: [], summary: { match: 0, close: 0, diverge: 0, unknown: 0 }, verdict: 'unknown', warning: error instanceof Error ? error.message : String(error) }
+          }
+        }
+        const refDuration = Number(analysed?.refDuration ?? 0)
+        const builtDuration = Number(analysed?.builtDuration ?? 0)
+        const refTime = Number.isFinite(args.ref_time) ? Math.max(0, args.ref_time) : (refDuration > 0 ? refDuration * 0.5 : 0)
+        const builtTime = Number.isFinite(args.built_time) ? Math.max(0, args.built_time) : (builtDuration > 0 ? builtDuration * 0.5 : 0)
+        const compare = await buildComparePair({
+          tools: resolved,
+          refFile: reference.path,
+          builtFile: produced.path,
+          refTime,
+          builtTime,
+          workDir,
+          outputPath: join(outDir, `compare-${Date.now()}.png`),
+          width: profileWidth(vision.profile, 'detail'),
+          labels: ['参考', '成片'],
+          mode: args.layout === 'side' ? 'side' : 'stack',
+        })
+        const attached = await attachFor(exec, [{ path: compare.path, name: 'media-senses-compare.png', kind: 'compare' }], vision)
+        const report = renderCompareReport({
+          reference: reference.path,
+          produced: produced.path,
+          diff,
+          compareImage: { path: compare.path, width: compare.width, height: compare.height, mode: compare.mode, tokenEstimate: compare.tokenEstimate },
+          target,
+        })
+        return {
+          kind: 'compare',
+          reference: reference.path,
+          produced: produced.path,
+          verdict: diff.verdict ?? 'unknown',
+          summary: diff.summary ?? {},
+          rows: diff.rows ?? [],
+          compare_image: compare.path ?? null,
+          images: attached.images,
+          vision: { active: vision.active, target, profile: vision.profile, reason: vision.reason },
+          report,
+        }
+      } finally {
+        await removeWorkDir(workDir)
+      }
+    },
+    presentCall(args) {
+      return { card: 'generic', title: `Compare ${args.reference} vs ${args.produced}`, kind: 'read' }
     },
   })
 
@@ -1284,59 +1661,60 @@ export function apply(ctx, rawConfig) {
 
 
   /**
-   * Attach a rendered image to the tool result when the *current model route*
-   * declares image input.
+   * Vision capability for one tool call (cached per exec object).
    *
-   * This mirrors the capability gate of the built-in `read_image` tool: the
-   * plugin must never emit an image block for a text-only route. Any failure
-   * (no attachment store, no llm service, unsupported media type, oversized
-   * image) simply degrades to "the file path is in the report".
+   * Resolves once per tool invocation: which model route is active, whether it
+   * accepts images, what the attachment limits are, and the image profile.
    *
-   * @param {object} exec tool run context
-   * @param {string|undefined} filePath absolute image path
-   * @param {string} name attachment display name
-   * @returns {Promise<object|undefined>} an attachment reference usable as an image block
+   * @param {object|undefined} exec tool run context
+   * @param {{mode?: string}} [args] tool arguments (an explicit `mode` overrides config)
    */
-  async function inlineImage(exec, filePath, name) {
-    if (config.embedImages === false) return undefined
-    if (typeof filePath !== 'string' || filePath.length === 0) return undefined
+  const visionCache = new WeakMap()
+  async function visionFor(exec, args) {
+    const override = typeof args?.mode === 'string' ? args.mode : undefined
+    if (override === undefined && exec !== null && typeof exec === 'object' && visionCache.has(exec)) {
+      return visionCache.get(exec)
+    }
+    const result = await detectVision({ ctx, exec, config, override })
+    if (override === undefined && exec !== null && typeof exec === 'object') visionCache.set(exec, result)
+    return result
+  }
+
+  /** The report rendering target derived from the vision decision. */
+  function targetOf(vision) {
+    return vision?.active === true ? 'vision' : 'blind'
+  }
+
+  /**
+   * Attach images for this tool result (capability + limits handled by lib/vision).
+   *
+   * @param {object|undefined} exec
+   * @param {Array<{path?: string, name: string, kind?: string}>} entries
+   * @param {object} [vision] pre-resolved vision decision (avoids a second probe)
+   * @returns {Promise<{images: object[], notes: string[]}>}
+   */
+  async function attachFor(exec, entries, vision) {
+    if (config.embedImages === false) return { images: [], notes: [] }
+    const decision = vision ?? (await visionFor(exec))
+    if (decision?.active !== true) return { images: [], notes: [] }
+    const resolved = await tools()
+    const visionWorkDir = await makeWorkDir('media-senses-vision')
     try {
-      const attachments = ctx.get('attachments')
-      const llm = ctx.get('llm')
-      if (attachments === undefined || llm === undefined) return undefined
-      const routed = exec?.agent?.session?.requestHeader?.()?.config
-      const provider = routed?.provider ?? exec?.agent?.options?.provider
-      const model = routed?.model ?? exec?.agent?.options?.model
-      if (typeof provider !== 'string' || typeof model !== 'string') return undefined
-      const info = await llm.resolveModelInfo(provider, model, exec?.signal)
-      if (!Array.isArray(info?.inputModalities) || !info.inputModalities.includes('image')) return undefined
-      const data = await readFile(filePath)
-      const limits = attachments.imageLimits
-      if (typeof limits?.maxImageBytes === 'number' && data.length > limits.maxImageBytes) return undefined
-      if (Array.isArray(limits?.mediaTypes) && !limits.mediaTypes.includes('image/png')) return undefined
-      const ref = await attachments.saveImage({ data, mediaType: 'image/png', name })
-      return {
-        attachmentId: ref.attachmentId,
-        mediaType: ref.mediaType,
-        bytes: ref.bytes,
-        width: ref.width,
-        height: ref.height,
-        ...(ref.name === undefined ? {} : { name: ref.name }),
-      }
-    } catch {
-      // Attaching an image is a bonus; never fail the analysis because of it.
-      return undefined
+      const attached = await attachImages({ ctx, exec, tools: resolved, workDir: visionWorkDir, entries, vision: decision })
+      const notes = [...attached.notes]
+      for (const skip of attached.skipped) notes.push(`未内嵌 ${skip.name ?? skip.path ?? '图片'}：${skip.reason}`)
+      return { images: attached.images, notes }
+    } catch (error) {
+      return { images: [], notes: [`图片内嵌失败：${error instanceof Error ? error.message : String(error)}`] }
+    } finally {
+      await removeWorkDir(visionWorkDir)
     }
   }
 
-  /** Collect the attachment references for a list of artifact paths. */
-  async function inlineImages(exec, entries) {
-    const images = []
-    for (const entry of entries) {
-      const ref = await inlineImage(exec, entry.path, entry.name)
-      if (ref !== undefined) images.push(ref)
-    }
-    return images
+  /** Backwards-compatible list form used by the tool bodies. */
+  async function inlineImages(exec, entries, vision) {
+    const attached = await attachFor(exec, entries, vision)
+    return attached.images
   }
 
   /**
@@ -1373,6 +1751,9 @@ export function apply(ctx, rawConfig) {
     }
   }
 }
+
+
+
 
 
 

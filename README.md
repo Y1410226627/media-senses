@@ -1,11 +1,11 @@
-# Media Senses · 视听感知与仿制
+﻿# Media Senses · 视听感知与仿制
 
 > 给**纯文本大模型**装上眼睛、耳朵和一台剪辑机：**看懂视频、听懂音乐、看见屏幕**，
 > 还能**批量学习一个品类的做法，然后自己仿制成片**。
 
 仓库：<https://github.com/Y1410226627/media-senses>
 
-一个 DeepSeek Harness（DSH）Host 插件，共 **11 个工具**，全部在本机用 ffmpeg + 本地 whisper 模型 +
+一个 DeepSeek Harness（DSH）Host 插件，共 **13 个工具**，全部在本机用 ffmpeg + 本地 whisper 模型 +
 Windows SAPI + headless 浏览器完成——**零 npm 依赖、零云 API、默认全程离线**。
 
 - **感知**：镜头/关键帧/亮度色相字符图、逐秒曲线、BPM/调性/和弦/曲式/响度/音色、语音转写、
@@ -13,6 +13,7 @@ Windows SAPI + headless 浏览器完成——**零 npm 依赖、零云 API、默
 - **学习与仿制**：批量语料 → 风格画像 + 仿制清单 → JSON 分镜 → 成片（转场/字幕/配乐/旁白/响度归一化）
 - **图像生成**：341 种代码动画风格 → headless Edge 逐帧渲成片段，拼进成片
 - **看屏幕**：按变化量选帧（切点 + 运动积分），拼成 42px token 对齐的一张图
+- **视觉适配**：有视觉能力的模型自动切到「图为主」的呈现——去字符图、给格号索引、给观察任务、按需裁剪放大
 
 ---
 
@@ -79,6 +80,30 @@ URL 列表        逐条镜头/转场/运镜/调色    + 仿制清单           
   `window.renderAt(t)` 的 HTML 动画逐帧渲成片段，再由 `media_build_video` 作为 `video` 场景拼进成片——
   这样「仿制」不只能拼素材，还能自己生成动态图形。
 - 最后用 `media_watch_video` 回测成片，和画像的节奏/调色/卡点对比，形成闭环。
+### 有视觉能力的模型：自动切到「以图为主」
+
+插件原本是为**纯文本模型**设计的：报告里大量使用 ASCII 亮度图、色相字母图和「偏暗/高对比」这类
+文字替代品。如果当前模型能看图，这些就是浪费——所以工具层会探测模型路由的 `inputModalities`，
+一旦声明了 `image`，就自动切到 **vision 模式**（`mode: "blind" | "vision" | "auto"` 可手动覆盖）：
+
+| | blind（默认 / 纯文本模型） | vision（有视觉能力的模型） |
+|---|---|---|
+| 画面描述 | 每镜头 15×40 亮度图 + 色相图 + 构图形容词 | **删掉**，直接给图 |
+| 报告开头 | 一句话概览 | **看图说明**：每张图是什么 + 格号→时间码映射表 + 坐标约定 |
+| 图片数量 | 末尾联系表 1 张 | 最多 4 张（联系表 / 时间条 / 裁剪图 / 频谱图），按 `attachments.imageLimits` 自动降档 |
+| 结尾 | 「还可以问我」建议 | **观察清单**：8–10 条必须用眼睛回答的具体任务（逐格描述、比较变化、读字幕、判断景别/光线/运动） |
+| 细节 | `media_frame` 给出字符图 | `media_frame` 支持 `region: "x,y,w,h"` 与 `zoom`：**裁剪原图像素再放大**，小字/纹理看得清 |
+
+实测同一条 12 秒视频：blind 报告 4504 字符，vision 报告 2319 字符（**少 48%**），省下的预算换成更清晰的图。
+配套新工具：
+
+- **`media_frames`**：一次取多个时间点拼成带帧号的横条（首/中/尾或任意时刻）。
+- **`media_compare`**：参考片 vs 仿制成片并排（上下/左右）+ 逐项数值差异（一致/接近/偏差大），
+  让视觉模型回答「像不像、下一版改哪里」——仿制闭环的验收工具。
+
+> 图片规格两档：`balanced`（默认，宽 1260px）与 `high`（宽 1596px，格子更少更大）；
+> 宽度都对齐宿主的 42px patch 网格，不付补齐那一列的钱。
+
 ## 2. 安装
 
 前置：本机有 `ffmpeg` 与 `ffprobe`（含 `signalstats`/`scdet`/`ebur128` 等滤镜；FFmpeg 8+ 最好，因为语音
@@ -96,7 +121,7 @@ plugin_manager(action="install_bundle", target="D:\\桌面\\装插件\\media-sen
 
 ---
 
-## 3. 工具集（11 个）
+## 3. 工具集（13 个）
 
 ### `media_probe` — 先看看这是什么文件
 
@@ -145,7 +170,10 @@ plugin_manager(action="install_bundle", target="D:\\桌面\\装插件\\media-sen
 | `path` | string | 必填 | 视频或图片路径 |
 | `time` | number | 0 | 时间点（秒）；图片可省略 |
 | `output_dir` | string | 临时目录 | 原图输出目录 |
-| `max_width` | integer | 960 | 导出原图最大宽度 |
+| `max_width` | integer | 960 / vision 1600 | 导出原图最大宽度 |
+| `region` | string | — | 只截一块：原图像素 `"x,y,w,h"`（vision 模式看细节用） |
+| `zoom` | number | — | 中心放大倍数 1–8 |
+| `mode` | string | auto | `blind` / `vision` 强制呈现方式 |
 
 返回该帧的 **56×22** 亮度图与色相图（比视频报告里的更精细）、配色、对比度、边缘密度、构图判断，
 并保存该帧原图。适合回答「这一秒屏幕上到底写着什么/什么颜色/主体在哪」。**也可以直接分析 png/jpg/webp/gif 图片**。
@@ -244,6 +272,30 @@ plugin_manager(action="install_bundle", target="D:\\桌面\\装插件\\media-sen
 **采集 → 变化打分 → 只保留「画面真的变了」的帧（切点尖峰 / 持续运动积分 / 兜底）→ 拼成一张
 token 对齐的拼图**，并给出每帧时间、变化分与原因。Windows 用 `gdigrab`（必要时退 `ddagrab`）；
 `allowScreenCapture: false` 可整体关掉。
+### `media_frames` — 一次看多个时间点
+
+| 参数 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `path` | string | 必填 | 视频或图片 |
+| `times` | number[] | 首/中/尾 3 点 | 最多 6 个时间点（秒） |
+| `width` | integer | vision 档位（1260） | 拼图宽度 |
+
+返回一张带帧号与时间码的横条（平均 ~190 token）。比逐次调 `media_frame` 少几次往返，
+用来回答「这几秒画面怎么变的」。
+
+### `media_compare` — 参考 vs 成片
+
+| 参数 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `reference` | string | 必填 | 参考片路径 |
+| `produced` | string | 必填 | 仿制成片路径 |
+| `ref_time` / `built_time` | number | 各取 50% | 取帧时间点 |
+| `layout` | string | stack | `stack`（上参考下成片）/ `side`（左右） |
+| `include_metrics` | boolean | true | 是否跑逐项数值对比 |
+
+会分析两边、给出 11 项差异（时长/镜头数/平均镜头长/切点率/亮度/彩度/BPM/调性/硬切占比/卡点率/调色）
+与总体判定（一致/接近/部分一致/偏差大），并把对比图交给视觉模型判断。**这是仿制闭环的验收步骤**。
+
 ## 4. 配置
 
 在插件面板（或 `cordis.patch.yml`）里可改：
@@ -260,6 +312,15 @@ token 对齐的拼图**，并给出每帧时间、变化分与原因。Windows �
 | `maxKeyframes` | 36 | 默认关键帧数 |
 | `outputDir` | `''` | 默认产物目录；留空写系统临时目录 |
 | `detail` | `full` | 默认展开程度 |
+| `skillDir` | `''` | 代码动画风格库目录，默认 `~/.dsh/skills/code-animation-prompts` |
+| `browserPath` | `''` | headless 渲染用的浏览器（默认自动找 Edge/Chrome） |
+| `animateMaxSeconds` | 60 | 单次代码动画渲染的最长时长 |
+| `corpusDir` | `''` | 语料默认目录，留空用 `~/.dsh/media-senses/corpus` |
+| `allowScreenCapture` | `true` | 是否允许 `media_see` 抓屏 |
+| `screenQuality` | `low` | `media_see` 默认档位（low≈800px / standard / high） |
+| `visionMode` | `auto` | `auto` 按模型能力自动切换；`blind`/`vision` 强制 |
+| `visionImageProfile` | `balanced` | 图像档位：`balanced`（1260px）/ `high`（1596px） |
+| `visionMaxImages` | 4 | 单次结果最多内嵌几张图 |
 
 ---
 
@@ -335,6 +396,9 @@ media-senses/
 │   ├── styles.js       # code-animation-prompts 风格库检索
 │   ├── change.js       # 变化量打分：切点尖峰 + 运动积分（吸收 dsh-see-now）
 │   ├── screen.js       # 屏幕采集 + token 对齐拼图（吸收 dsh-see-now）
+│   ├── vision.js       # 视觉适配：能力探测、图片预算、尺寸夹取
+│   ├── montage.js      # 时间条 / 对比图拼装 + 参考 vs 成片差异度量
+│   ├── render-vision.js # 多帧 / 对比报告渲染
 │   └── render-v2.js    # v2 报告渲染（技法/画像/合成结果/风格库）
 ├── bin/README.md       # yt-dlp 获取方式（二进制不入库）
 ├── locale/{en,zh}.json # 插件面板标题与描述
@@ -470,6 +534,18 @@ node demo/run-demo.mjs          # 单条感知（01–05 号报告）
 - `media_watch_video` 也接了同一套变化量分析：报告里多一节「画面变化」，
   列出硬切点与「按信息量值得细看」的时间点（录屏/幻灯片尤其有用）
 
+### 视觉模式演示：时间条与对比图
+
+`media_frames` 一次取首/中/尾三帧，烧上帧号与时间码（1260×241，约 188 token）：
+
+![时间条：3 帧，带帧号与时间码](demo/output/vision-filmstrip.png)
+
+`media_compare` 把参考片与仿制成片上下并排，附 11 项数值判定（1260×1420，约 1056 token）：
+
+![参考 vs 成片：上 REF 下 BUILT](demo/output/vision-compare.png)
+
+盲模型看到这两张图的文字说明与数值表；视觉模型直接看图 + 用「格号/时间码」引用，
+并用 `media_frame` 的 `region`/`zoom` 放大任何看不清的局部。
 ## 9. 验证
 
 ```text
@@ -483,8 +559,11 @@ node test/change.test.mjs        # 变化量打分与选帧：切点/积分/兜�
 node test/screen.test.mjs        # 屏幕采集 + token 对齐拼图（含真实截屏）                   23 项
 node test/htmlrender.test.mjs    # 代码动画渲染：CDP、确定性、黑帧检测、降级                  14 项
 node test/e2e.mjs                # v1 端到端：真实调用感知工具                                9 项
-node test/e2e-v2.mjs             # 全链路：学→取风格→造画面→合成→回测→看屏幕                14 项
-                                   —— 合计 231 项断言，全部通过
+node test/vision.test.mjs        # 视觉适配：能力探测、图片预算、裁剪、多帧/对比报告         19 项
+node test/montage.test.mjs       # 时间条/对比图拼装与参考 vs 成片差异度量                    19 项
+node test/vision-render.test.mjs # blind/vision 双模式报告（含 blind 逐字节回归）              31 项
+node test/e2e-v2.mjs             # 全链路：学→取风格→造画面→合成→回测→看屏幕                16 项
+                                   —— 合计 302 项断言，全部通过
 ```
 
 夹具是**合成**的，因此有 ground truth 可比：音频夹具是 120 BPM、C 大调、4/4、24 秒的鼓+贝斯+旋律
@@ -508,6 +587,8 @@ code-animation-prompts 技能、FFmpeg、whisper.cpp、PySceneDetect、librosa�
 
 > 使用提醒：批量下载、分析与仿制视频时，请自行确认素材的版权与所在站点的服务条款；屏幕采集只在
 > 本机进行、不联网上传，可用 `allowScreenCapture: false` 关闭。
+
+
 
 
 

@@ -1,6 +1,6 @@
 {
   "name": "@local/media-senses",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "license": "MIT",
   "repository": {
@@ -11,7 +11,7 @@
   "bugs": {
     "url": "https://github.com/Y1410226627/media-senses/issues"
   },
-  "description": "Audio-visual senses, a reproduction loop, and live screen vision for text-only LLMs: learn a video genre from a corpus, build similar videos with ffmpeg + local TTS + headless-browser code animations, and watch the screen by keeping only the frames that changed.",
+  "description": "Perception, reproduction and screen vision for LLM agents: watch videos and images (blind or vision-targeted reports), listen to music, learn a genre from a corpus, build similar videos with ffmpeg + local TTS + headless-browser code animations, and compare a replica against its reference.",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -39,4 +39,3 @@
     }
   }
 }
-

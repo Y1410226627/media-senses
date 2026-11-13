@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Media Senses",
-    "description": "Eyes, ears, live screen vision and a reproduction loop for a text-only LLM: learn a video genre from a corpus, build similar videos with ffmpeg + local TTS + 341 headless-browser code animations, and watch the screen keeping only the frames that actually changed. Zero npm dependencies, fully offline."
+    "description": "Perception, reproduction and screen vision for an LLM agent: watch videos, listen to music, watch the screen, learn a video genre from a corpus and build similar videos with ffmpeg + local TTS + 341 headless-browser code animations. Vision-capable models automatically get image-first reports; text-only models get ASCII renderings. Zero npm dependencies, fully offline."
   }
 }

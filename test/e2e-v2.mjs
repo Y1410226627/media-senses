@@ -265,6 +265,32 @@ await check('media_see peek returns a live screen capture with analysis', async 
   assert.match(report, /## 画面指标/u)
 })
 
+// ---------------------------------------------------------------- 7. vision tools
+await check('media_frames returns a labelled multi-frame strip', async () => {
+  const { value, report } = await callTool('media_frames', { path: join(mediaDir, 'trailer.mp4'), times: [1, 8, 15] })
+  assert.equal(value.kind, 'frames')
+  assert.equal(value.cells.length, 3)
+  assert.ok(value.token_estimate > 0, `token estimate ${value.token_estimate}`)
+  assert.match(report, /# 多帧画面/u)
+  assert.match(report, /帧序/u)
+  const info = await stat(value.strip_path)
+  assert.ok(info.size > 5_000)
+})
+
+await check('media_compare compares a reference with a produced video', async () => {
+  const reference = join(workspace, 'reference.mp4')
+  const tools = await resolveTools()
+  await run(tools.ffmpeg, ['-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc2=s=640x360:d=6:r=25', '-f', 'lavfi', '-i', 'sine=frequency=330:duration=6', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', reference], { cwd: workspace })
+  const { value, report } = await callTool('media_compare', { reference, produced: join(mediaDir, 'trailer.mp4'), include_metrics: true })
+  assert.equal(value.kind, 'compare')
+  assert.ok(['match', 'close', 'diverge', 'partly', 'unknown'].includes(value.verdict), `verdict ${value.verdict}`)
+  assert.ok(Array.isArray(value.rows) && value.rows.length >= 6, `rows ${value.rows?.length}`)
+  assert.match(report, /# 参考 vs 成片/u)
+  assert.match(report, /总体判定/u)
+  const info = await stat(value.compare_image)
+  assert.ok(info.size > 5_000)
+})
+
 await rm(workspace, { recursive: true, force: true })
 
 console.log(`\n${passed} passed, ${failures.length} failed`)
@@ -273,6 +299,7 @@ if (failures.length > 0) {
   process.exit(1)
 }
 console.log('ALL PASS')
+
 
 
 

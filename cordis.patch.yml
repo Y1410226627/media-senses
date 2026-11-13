@@ -5,3 +5,7 @@
         ffmpegPath: ''
         ffprobePath: ''
         whisperModel: tiny
+        visionMode: auto
+        visionImageProfile: balanced
+        visionMaxImages: 4
+        allowScreenCapture: true
