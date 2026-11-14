@@ -1211,11 +1211,13 @@ export function apply(ctx, rawConfig) {
       properties: {
         action: {
           type: 'string',
-          enum: ['moves', 'transitions', 'easing', 'looks', 'antipatterns', 'rules', 'cards', 'budget', 'show'],
-          description: 'moves 运镜 / transitions 转场 / easing 缓动与弹簧 / looks 外观预设 / antipatterns 反 AI 味 / rules 剪辑缝 / cards 镜头配方卡 / budget 时长预算 / show 取单项详情。默认 moves。',
+          enum: ['moves', 'transitions', 'easing', 'looks', 'antipatterns', 'rules', 'cards', 'budget', 'templates', 'template', 'show'],
+          description: 'moves 运镜 / transitions 转场 / easing 缓动与弹簧 / looks 外观预设 / antipatterns 反 AI 味 / rules 剪辑缝 / cards 镜头配方卡 / budget 时长预算 / templates 可渲模板 / template 取模板 HTML / show 取单项详情。默认 moves。',
         },
-        query: { type: 'string', description: 'cards 时的检索词（如「标题」「数据」「转场」「stagger」）；show 时也可用 id。' },
-        id: { type: 'string', description: 'show 时的 id（运镜/转场/外观/镜头卡 id，如 push-in / dissolve / anime-cel / camera.push-in）。' },
+        query: { type: 'string', description: 'cards / templates 时的检索词（如「标题」「数据」「手绘」）；show 时也可用 id。' },
+        id: { type: 'string', description: 'show / template 时的 id（运镜/转场/外观/镜头卡/模板，如 push-in / dissolve / anime-cel / kinetic-type）。' },
+        params: { type: 'object', description: 'template 时要填入的内容（如 {"words":["第一句","第二句"]}）；省略则用模板默认值。' },
+        duration: { type: 'number', description: 'template 时的目标时长（秒），会注入页面以驱动节奏。' },
         category: { type: 'string', description: 'cards 时的类目筛选：opening-brand / camera / transitions / typography / ui-entrance / interaction / data / light-emphasis / rhythm / outro。' },
         energy: { type: 'string', enum: ['low', 'medium', 'high'], description: 'cards 时的能量筛选。' },
         seconds: { type: 'number', description: 'budget 时的目标时长（秒）。' },
@@ -1305,6 +1307,40 @@ export function apply(ctx, rawConfig) {
           lines.push(renderShotCard(card))
           lines.push('')
         }
+        report = tidy(lines.join('\n'))
+      } else if (action === 'templates') {
+        const { listTemplates, renderTemplateCard } = await import('./lib/templates.js')
+        const entries = listTemplates({ query: typeof args.query === 'string' ? args.query : '', limit })
+        payload = { action, entries: entries.map((entry) => ({ id: entry.id, nameZh: entry.nameZh, seconds: entry.seconds, energy: entry.energy })) }
+        const lines = [`# 可渲模板${typeof args.query === 'string' && args.query.length > 0 ? ` · ${args.query}` : ''}`, '']
+        if (entries.length === 0) {
+          lines.push('没有匹配的模板；换一个词（「标题」「数据」「手绘」「拼贴」「卡片」）或去掉检索词。')
+        }
+        for (const entry of entries) {
+          lines.push(renderTemplateCard(entry))
+          lines.push('')
+        }
+        lines.push('> 取某一支的完整 HTML：`action: "template", id: "<模板 id>"`，填入 `params` 后直接交给 `media_animate`（传 `html` 或落盘后传 `html_path`）。')
+        report = tidy(lines.join('\n'))
+      } else if (action === 'template') {
+        const { getTemplate, fillTemplate } = await import('./lib/templates.js')
+        const wanted = String(typeof args.id === 'string' ? args.id : args.query ?? '').trim()
+        if (wanted.length === 0) throw new Error('template 需要 id（如 kinetic-type / hand-drawn-line / data-bars）')
+        const loaded = await getTemplate(wanted)
+        const html = fillTemplate(loaded.html, args.params ?? {}, { duration: Number.isFinite(args.duration) ? args.duration : undefined })
+        payload = {
+          action,
+          template: { id: loaded.meta.id, nameZh: loaded.meta.nameZh, seconds: loaded.meta.seconds, params: loaded.meta.params },
+          html,
+        }
+        const lines = [`# 模板：${loaded.meta.nameZh}`, '', `\`${loaded.meta.id}\` · 建议 ${loaded.meta.seconds[0]}–${loaded.meta.seconds[1]} 秒`, '', loaded.meta.useWhenZh, '']
+        lines.push('## 已填好的 HTML（直接渲染）')
+        lines.push('```html')
+        lines.push(html)
+        lines.push('```')
+        lines.push('')
+        lines.push('> 下一步：把这段 HTML 传给 `media_animate`：`{ html: "<上面的内容>", duration, fps, width, height }`。')
+        lines.push('> 需要改内容就重取一次并给 `params`；需要改技法就改 HTML 里的 renderAt（它已经是 `t` 的纯函数）。')
         report = tidy(lines.join('\n'))
       } else {
         // show: try a camera move, a transition, a look, then a shot card.

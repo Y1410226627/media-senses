@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Hand-drawn line</title>
+<style>
+  html, body { margin: 0; height: 100%; background: var(--ms-paper, #f2ece0); overflow: hidden; }
+  svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .stroke { fill: none; stroke: var(--ms-ink, #241f1b); stroke-linecap: round; stroke-linejoin: round; }
+  #caption { position: absolute; left: 0; right: 0; text-align: center; font-family: var(--ms-font, "Microsoft YaHei", sans-serif); }
+</style>
+</head>
+<body>
+<svg id="art" viewBox="0 0 1920 1080" preserveAspectRatio="xMidYMid slice"></svg>
+<div id="caption"></div>
+<script>
+/*
+ * Hand-drawn line: every stroke is drawn on with stroke-dasharray, and each
+ * stroke gets a per-frame jitter so the line "boils" like real ink on paper
+ * instead of looking like a clean vector. This is the technique behind most
+ * hand-drawn explainer videos: draw-on + line boil + a paper ground.
+ */
+const DEFAULTS = {
+  paper: '#f2ece0',
+  ink: '#241f1b',
+  accent: '#c8452a',
+  caption: '一笔一笔画出来',
+  strokeWidth: 9,
+  drawSeconds: 2.2,
+  boilHz: 8,        // line boil rate: how many jitters per second
+  boilAmount: 1.6,  // px of wobble
+  jitterSeed: 7,
+}
+
+const cfg = Object.assign({}, DEFAULTS, window.__MS_TEMPLATE || {})
+document.documentElement.style.setProperty('--ms-paper', cfg.paper)
+document.documentElement.style.setProperty('--ms-ink', cfg.ink)
+
+const svg = document.getElementById('art')
+const caption = document.getElementById('caption')
+caption.textContent = cfg.caption || ''
+caption.style.color = cfg.ink
+caption.style.fontSize = '46px'
+caption.style.top = '900px'
+
+// A simple scene: a horizon, a house outline, a roof, a door, a sun.
+const SHAPES = [
+  { d: 'M 260 760 L 1660 760', accent: false },                         // ground
+  { d: 'M 640 720 L 640 430 L 1120 430 L 1120 720', accent: false },    // walls
+  { d: 'M 600 430 L 880 250 L 1160 430', accent: true },               // roof
+  { d: 'M 830 720 L 830 590 L 940 590 L 940 720', accent: false },      // door
+  { d: 'M 700 480 L 790 480 L 790 560 L 700 560 Z', accent: false },    // window
+  { d: 'M 1360 250 m -70 0 a 70 70 0 1 0 140 0 a 70 70 0 1 0 -140 0', accent: true }, // sun
+]
+const elements = SHAPES.map((shape) => {
+  const node = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  node.setAttribute('d', shape.d)
+  node.setAttribute('class', 'stroke')
+  node.setAttribute('stroke-width', String(cfg.strokeWidth))
+  node.setAttribute('stroke', shape.accent ? cfg.accent : cfg.ink)
+  svg.appendChild(node)
+  return node
+})
+
+// Deterministic pseudo-random per (stroke, boil frame): a hash, not Math.random.
+function hash(a, b, seed) {
+  let h = (a * 374761393 + b * 668265263 + seed * 2246822519) | 0
+  h = (h ^ (h >>> 13)) * 1274126177
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296
+}
+
+window.renderAt = async function (t) {
+  const boilFrame = Math.floor(t * cfg.boilHz)
+  let cursor = 0
+  for (let index = 0; index < elements.length; index += 1) {
+    const node = elements[index]
+    const length = node.getTotalLength()
+    // Strokes start one after another, each taking a share of the draw window.
+    const start = (cursor / elements.length) * 1.1
+    const span = Math.max(0.25, cfg.drawSeconds / elements.length)
+    cursor += 1
+    const p = Math.max(0, Math.min(1, (t - start) / span))
+    node.style.strokeDasharray = String(length)
+    node.style.strokeDashoffset = String(length * (1 - p))
+    // Line boil: offset the whole path by a sub-pixel wobble that changes at
+    // boilHz. Applied only after the stroke exists, so an undrawn stroke stays put.
+    const dx = (hash(index, boilFrame, cfg.jitterSeed) - 0.5) * 2 * cfg.boilAmount * p
+    const dy = (hash(index + 91, boilFrame, cfg.jitterSeed) - 0.5) * 2 * cfg.boilAmount * p
+    node.setAttribute('transform', 'translate(' + dx.toFixed(2) + ' ' + dy.toFixed(2) + ')')
+  }
+  // Caption fades in once drawing is done and then holds still.
+  const cp = Math.max(0, Math.min(1, (t - 1.4) / 0.5))
+  caption.style.opacity = String(cp)
+}
+</script>
+</body>
+</html>

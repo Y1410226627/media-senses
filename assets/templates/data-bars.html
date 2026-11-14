@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Data bars</title>
+<style>
+  html, body { margin: 0; height: 100%; background: var(--ms-bg, #0f1116); overflow: hidden;
+               font-family: var(--ms-font, "Microsoft YaHei", sans-serif); }
+  /* The stage is authored at 1920x1080 and scaled to the viewport, so the same
+     template renders correctly at any output size. */
+  #stage { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px;
+           padding: 120px 160px; box-sizing: border-box; transform-origin: 0 0; }
+  #title { color: var(--ms-ink, #f2f2f2); font-size: 58px; font-weight: 800; margin-bottom: 12px; }
+  #sub { color: var(--ms-muted, #8b8f9a); font-size: 30px; margin-bottom: 64px; }
+  .row { display: flex; align-items: center; margin-bottom: 34px; }
+  .label { width: 320px; color: var(--ms-ink, #f2f2f2); font-size: 34px; }
+  .track { flex: 1; height: 54px; position: relative; }
+  .bar { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 6px; }
+  .value { width: 170px; text-align: right; color: var(--ms-ink, #f2f2f2); font-size: 36px; font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="title"></div>
+  <div id="sub"></div>
+  <div id="rows"></div>
+</div>
+<script>
+/*
+ * Data bars: rows grow from zero with a small stagger, the number counts up with
+ * the bar (so the number is never ahead of the shape), and the last bar gets the
+ * accent colour alone. Everything lands, then holds.
+ */
+const DEFAULTS = {
+  title: '这一年发生了什么',
+  sub: '单位：万',
+  rows: [
+    { label: '第一项', value: 42 },
+    { label: '第二项', value: 68 },
+    { label: '第三项', value: 91 },
+  ],
+  bg: '#0f1116',
+  ink: '#f2f2f2',
+  muted: '#8b8f9a',
+  accent: '#ff5a3c',
+  growSeconds: 0.85,
+  stagger: 0.14,
+  startAt: 0.25,
+  decimals: 0,
+}
+
+const cfg = Object.assign({}, DEFAULTS, window.__MS_TEMPLATE || {})
+document.documentElement.style.setProperty('--ms-bg', cfg.bg)
+
+const titleEl = document.getElementById('title')
+const subEl = document.getElementById('sub')
+const rowsEl = document.getElementById('rows')
+titleEl.textContent = cfg.title || ''
+subEl.textContent = cfg.sub || ''
+
+const maxValue = Math.max.apply(null, cfg.rows.map((row) => Number(row.value) || 0).concat([0.0001]))
+const bars = cfg.rows.map((row, index) => {
+  const rowEl = document.createElement('div')
+  rowEl.className = 'row'
+  const label = document.createElement('div')
+  label.className = 'label'
+  label.textContent = row.label
+  const track = document.createElement('div')
+  track.className = 'track'
+  const bar = document.createElement('div')
+  bar.className = 'bar'
+  bar.style.background = index === cfg.rows.length - 1 ? cfg.accent : cfg.muted
+  track.appendChild(bar)
+  const value = document.createElement('div')
+  value.className = 'value'
+  rowEl.appendChild(label)
+  rowEl.appendChild(track)
+  rowEl.appendChild(value)
+  rowsEl.appendChild(rowEl)
+  return { bar, value, target: Number(row.value) || 0 }
+})
+
+const easeOut = (x) => { const v = Math.max(0, Math.min(1, x)); return 1 - Math.pow(1 - v, 3) }
+
+// Author at 1920x1080, then scale to whatever viewport the renderer uses.
+const stage = document.getElementById('stage')
+function fitStage() {
+  const scale = Math.min(window.innerWidth / 1920, window.innerHeight / 1080)
+  stage.style.transform = 'scale(' + scale.toFixed(5) + ')'
+}
+fitStage()
+window.addEventListener('resize', fitStage)
+
+window.renderAt = async function (t) {
+  for (let index = 0; index < bars.length; index += 1) {
+    const start = cfg.startAt + index * cfg.stagger
+    const p = easeOut((t - start) / cfg.growSeconds)
+    const share = (bars[index].target / maxValue) * p
+    bars[index].bar.style.width = (share * 100).toFixed(3) + '%'
+    // The number counts with the bar, never runs ahead of the shape.
+    bars[index].value.textContent = (bars[index].target * p).toFixed(cfg.decimals)
+  }
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Kinetic type — word impact</title>
+<style>
+  html, body { margin: 0; height: 100%; background: var(--ms-bg, #0d0e12); overflow: hidden; }
+  /* Authored at 1920x1080 and scaled to the viewport, so any output size works. */
+  #stage { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px;
+           display: flex; align-items: center; justify-content: center; transform-origin: 0 0; }
+  .line { position: absolute; left: 0; right: 0; text-align: center; font-family: var(--ms-font, "Microsoft YaHei", sans-serif); font-weight: 900; }
+  .word { display: inline-block; will-change: transform, opacity, filter; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div class="line" id="hero"></div>
+  <div class="line" id="tag" style="top:62%; font-size:var(--ms-tag-size, 34px); font-weight:400; letter-spacing:.14em;"></div>
+</div>
+<script>
+/*
+ * Kinetic type: words slam in one after another, each with a short overshoot,
+ * then everything lands and holds dead still (a moving title reads as a defect).
+ *
+ * Deterministic contract: the whole frame is a function of t. No rAF, no clock,
+ * no unseeded random. Configured through window.__MS_TEMPLATE (injected by the
+ * caller) merged over DEFAULTS.
+ */
+const DEFAULTS = {
+  words: ['一个词', '一个词', '砸进画面'],
+  tag: '跟着节拍，不要一起淡入',
+  accent: '#ff5a3c',
+  bg: '#0d0e12',
+  ink: '#f4f1ea',
+  heroSize: 132,
+  wordIn: 0.16,      // seconds per word entrance
+  stagger: 0.09,     // gap between word starts
+  holdAt: 0.72,      // when the whole line lands (fraction of duration)
+  overshoot: 1.18,   // scale peak
+}
+
+const cfg = Object.assign({}, DEFAULTS, window.__MS_TEMPLATE || {})
+document.documentElement.style.setProperty('--ms-bg', cfg.bg)
+
+const hero = document.getElementById('hero')
+const tag = document.getElementById('tag')
+hero.style.fontSize = cfg.heroSize + 'px'
+hero.style.color = cfg.ink
+tag.style.color = cfg.ink
+
+// Build the word spans once; renderAt only writes styles.
+const spans = cfg.words.map((text, index) => {
+  const span = document.createElement('span')
+  span.className = 'word'
+  span.textContent = text
+  span.style.color = index === cfg.words.length - 1 ? cfg.accent : cfg.ink
+  hero.appendChild(span)
+  if (index < cfg.words.length - 1) {
+    const space = document.createTextNode('\u00A0')
+    hero.appendChild(space)
+  }
+  return span
+})
+tag.textContent = cfg.tag || ''
+
+const smoothstep = (x) => { const v = Math.max(0, Math.min(1, x)); return v * v * (3 - 2 * v) }
+const DURATION = Number(window.__MS_DURATION) > 0 ? Number(window.__MS_DURATION) : 4
+
+// Author at 1920x1080, scale to the render viewport.
+const stage = document.getElementById('stage')
+function fitStage() {
+  stage.style.transform = 'scale(' + Math.min(window.innerWidth / 1920, window.innerHeight / 1080).toFixed(5) + ')'
+}
+fitStage()
+window.addEventListener('resize', fitStage)
+
+window.renderAt = async function (t) {
+  const landTime = DURATION * cfg.holdAt
+  for (let index = 0; index < spans.length; index += 1) {
+    const start = index * cfg.stagger
+    const p = smoothstep((t - start) / cfg.wordIn)
+    // Impulse: scale up past 1 then settle; the settle is what reads as weight.
+    const kick = Math.sin(Math.PI * Math.min(1, p)) * (cfg.overshoot - 1)
+    const scale = 1 + kick * (1 - p)
+    spans[index].style.opacity = String(Math.min(1, p * 1.6))
+    spans[index].style.transform = 'translateY(' + ((1 - p) * 26).toFixed(2) + 'px) scale(' + scale.toFixed(4) + ')'
+    spans[index].style.filter = p < 0.99 ? 'blur(' + ((1 - p) * 6).toFixed(2) + 'px)' : 'none'
+  }
+  // The tag appears only after the line has landed, and then never moves again.
+  const tagStart = landTime
+  const tagP = smoothstep((t - tagStart) / 0.42)
+  tag.style.opacity = String(tagP * 0.82)
+  tag.style.transform = 'translateY(' + ((1 - tagP) * 12).toFixed(2) + 'px)'
+}
+</script>
+</body>
+</html>

@@ -251,6 +251,10 @@ plugin_manager(action="install_bundle", target="D:\\桌面\\装插件\\media-sen
 | 静止空档 | 连续 ≥ 3 s 无任何变化 = 未过 | 观众会以为卡住了 |
 | 音频动态 | 峰值 ≤ −3 dBFS、无削波、安静片段 ≥ 15% | 一直很响就听不出重点 |
 
+判定同时看两个指标：**平均差异**与**变动像素占比**。只看平均差异会把稀疏运动漏掉——一条慢慢画出来的
+线、一段缓慢的视差推镜，改动画面不到 2% 的像素，平均差异几乎为零，于是被误报成「完全没变化」。
+加上「变动像素占比」后，这类运动能被正确识别（这条是实测里踩出来的：手绘描线和 46px 的慢推镜都被误判过）。
+
 规则是「**只有 FAIL 才算未通过**」：`WARN` 是要你看着办并说明理由（比如一条连续运镜的作品本来
 就没有爆发）。渐变色转场会让硬切检测看不见切点，这时 `cadence` 自动回退到**分镜里写的场景时长**——
 量的是你剪的节奏，而不是检测器的脾气。判定会写进报告「## 验收门禁」一节，同时出现在工具返回值的
@@ -302,6 +306,25 @@ plugin_manager(action="install_bundle", target="D:\\桌面\\装插件\\media-sen
 - **7 条剪辑缝规则**：切在动作最快处、两侧方向速度匹配、zoom 符号不变、主体位置差 ≤1/10 画幅、运动模糊帧内不许硬切。
 - **44 张镜头配方卡**：每张有意图、运动、**参数表（参数 | 典型值 | 往哪调会怎样）**、声音、常见坑、可运行配方。第三列是关键——它说「再大就散架」而不只是「4–6 帧」。
 - **时长预算**：这个时长最多画多少笔（起形+马克笔 3.9 笔/秒、按部位上色 6 笔/秒），以及五种体裁的常见时长区间。
+
+### 可渲模板（`media_moves` 的 `templates` / `template`）
+
+知道参数和真的渲出一条片子之间还差一大截：得记住 `renderAt(t)` 契约、保证全部由 `t` 决定、
+不能有 rAF/定时器/未播种随机、图层顺序要写对。所以内置 6 个**已经能跑**的模板，
+每个只暴露几个内容参数：
+
+| 模板 | 用来做什么 | 技法 |
+|------|-----------|------|
+| `kinetic-type` | 一句短文案砸进观众眼里（金句/副歌/开场） | 逐字入场、过冲回落、模糊清焦、落定完全静止 |
+| `mask-reveal` | 标题「被揭开」而不是淡入 | 遮罩扫过、边缘揭示、横线自画 |
+| `hand-drawn-line` | 讲解类的手绘感 | stroke-dasharray 描线、线条沸腾（逐帧抖动）、纸底 |
+| `data-bars` | 几组可比数字 | 错峰增长、数字与形状同步、末项强调色 |
+| `ui-entrance` | 产品功能/步骤卡 | 错峰入场、ease-out 长尾、清焦、落定静止 |
+| `paper-collage` | 不靠 3D 的纵深 | 多层视差、按深度分速率、纸纹暗角、近层微缩放 |
+
+用法：`media_moves { action: "template", id: "data-bars", params: {...}, duration: 4 }` 拿到**填好内容的完整 HTML**，
+直接交给 `media_animate { html: ..., duration, fps, width, height }` 渲成片段，再拼进 `media_build_video`。
+每个模板都按 1920×1080 设计并自动缩放到任意输出尺寸；测试会真的把 6 个模板各渲一遍，断言帧确实在动。
 
 ### `media_animate` — 把代码动画渲成视频片段
 
@@ -648,7 +671,8 @@ node test/change.test.mjs        # 变化量打分与选帧：切点/积分/兜�
 node test/screen.test.mjs        # 屏幕采集 + token 对齐拼图（含真实截屏）                   23 项
 node test/htmlrender.test.mjs    # 代码动画渲染：CDP、确定性、源码扫描、黑帧检测、降级          17 项
 node test/anim-runtime.test.mjs  # 运行时平权：CSS/WAAPI seek、声明式时间轴、运动模糊、页内音频  20 项
-node test/gate.test.mjs          # 验收门禁：节奏/静帧/爆发/空档/音频五条腿的阈值与回退         15 项
+node test/templates.test.mjs     # 6 个模板逐个真渲一遍，断言帧在动、参数生效                 19 项
+node test/gate.test.mjs          # 验收门禁：节奏/静帧/爆发/空档/音频五条腿 + 稀疏运动            16 项
 node test/styles-guidance.test.mjs # 风格提示词分节：不可改/可替换/禁用项（含真实库）         13 项
 node test/vocabulary.test.mjs    # 词汇库：12 曲线 + 弹簧、18 运镜、9 转场、8 外观、15 反模式    30 项
 node test/shots-lint.test.mjs    # 镜头卡库、版式体检、评分卡（含无证据拒绝）                 39 项
@@ -659,7 +683,7 @@ node test/vision.test.mjs        # 视觉适配：能力探测、图片预算、
 node test/montage.test.mjs       # 时间条/对比图拼装与参考 vs 成片差异度量                    19 项
 node test/vision-render.test.mjs # blind/vision 双模式报告（含 blind 逐字节回归）              31 项
 node test/e2e-v2.mjs             # 全链路：学→取风格→造画面→合成→回测→看屏幕                16 项
-                                   —— 合计 466 项断言，全部通过
+                                   —— 合计 504 项断言，全部通过
 ```
 
 夹具是**合成**的，因此有 ground truth 可比：音频夹具是 120 BPM、C 大调、4/4、24 秒的鼓+贝斯+旋律

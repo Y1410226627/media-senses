@@ -84,6 +84,56 @@ async function writeSynthetic(path, colour, shape) {
   }
 }
 
+/**
+ * Build a synthetic film where a small bright block moves across a flat ground.
+ *
+ * Used to prove the gate can see *sparse* motion: the mean frame difference of a
+ * small moving element stays far below the stillness threshold, so only the
+ * moved-pixel-share check can catch it. This is the case that used to make a
+ * slowly drifting shot read as a frozen frame.
+ */
+async function writeMovingBlock(path, { fps, frames, width, height, blockSize, speedPxPerFrame }) {
+  const frameBytes = width * height * 3
+  const buffer = Buffer.alloc(frameBytes * frames)
+  // Flat dark ground everywhere.
+  for (let offset = 0; offset < buffer.length; offset += 3) {
+    buffer[offset] = 18
+    buffer[offset + 1] = 20
+    buffer[offset + 2] = 26
+  }
+  for (let frame = 0; frame < frames; frame += 1) {
+    const left = Math.round(frame * speedPxPerFrame) % Math.max(1, width - blockSize)
+    const top = Math.round(height * 0.2)
+    const offset = frame * frameBytes
+    for (let y = top; y < top + blockSize && y < height; y += 1) {
+      for (let x = left; x < left + blockSize && x < width; x += 1) {
+        const pixel = (y * width + x) * 3
+        buffer[offset + pixel] = 240
+        buffer[offset + pixel + 1] = 235
+        buffer[offset + pixel + 2] = 225
+      }
+    }
+  }
+  const rawPath = `${path}.rgb`
+  await writeFile(rawPath, buffer)
+  const workDir = await makeWorkDir('gate-block')
+  try {
+    const { run } = await import('../lib/ffmpeg.js')
+    const result = await run(tools.ffmpeg, [
+      '-v', 'error', '-y',
+      '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-s', `${width}x${height}`, '-r', String(fps),
+      '-i', rawPath,
+      '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '18', '-pix_fmt', 'yuv420p',
+      '-r', String(fps),
+      path,
+    ], { cwd: workDir })
+    assert.equal(result.code, 0, `synthetic encode failed: ${result.stderr.slice(0, 400)}`)
+  } finally {
+    await removeWorkDir(workDir)
+    await rm(rawPath, { force: true })
+  }
+}
+
 await check('thresholds are the documented measured values', () => {
   assert.equal(GATE_THRESHOLDS.cadenceCv, 0.25)
   assert.equal(GATE_THRESHOLDS.stillRatio, 0.25)
@@ -92,6 +142,7 @@ await check('thresholds are the documented measured values', () => {
   assert.equal(GATE_THRESHOLDS.deadAirSec, 3)
   assert.equal(GATE_THRESHOLDS.peakDb, -3)
   assert.equal(GATE_THRESHOLDS.quietRatio, 0.15)
+  assert.ok(GATE_THRESHOLDS.stillMovedShare > 0 && GATE_THRESHOLDS.stillMovedShare < 0.05)
   assert.ok(GATE_OPTIONS.width > 0 && GATE_OPTIONS.height > 0)
 })
 
@@ -282,6 +333,34 @@ await check('audio leg FAILs a clipped mix', async () => {
     assert.equal(audio.state, 'FAIL', `expected FAIL, got ${audio.state}: ${audio.detail}`)
     assert.ok(audio.value.clipped > 0, 'clipping must be counted')
     assert.ok(audio.value.peakDb > GATE_THRESHOLDS.peakDb)
+  } finally {
+    await removeWorkDir(workDir)
+  }
+})
+
+await check('a small element moving continuously is NOT reported as dead air', async () => {
+  // A 24px block crossing a flat ground: the mean frame difference is minuscule
+  // (well under stillDiff) while a viewer plainly sees motion. Before the
+  // moved-pixel-share check this was reported as a frozen stretch.
+  const moving = join(scratch, 'moving-block.mp4')
+  await writeMovingBlock(moving, { fps: 12, frames: 72, width: 320, height: 180, blockSize: 40, speedPxPerFrame: 8 })
+  const frozen = join(scratch, 'frozen-block.mp4')
+  await writeMovingBlock(frozen, { fps: 12, frames: 72, width: 320, height: 180, blockSize: 40, speedPxPerFrame: 0 })
+
+  const workDir = await makeWorkDir('gate-metric')
+  try {
+    const movingResult = await runGate({ tools, file: moving, workDir })
+    const frozenResult = await runGate({ tools, file: frozen, workDir })
+    const movingAir = movingResult.legs.find((leg) => leg.id === 'dead-air')
+    const frozenAir = frozenResult.legs.find((leg) => leg.id === 'dead-air')
+    // The frozen film really is dead air.
+    assert.equal(frozenAir.state, 'FAIL', `a frozen film must be dead air, got ${frozenAir.state}`)
+    // The moving film must be strictly better and must not be a FAIL.
+    assert.notEqual(movingAir.state, 'FAIL', `sparse motion was misread as dead air: ${movingAir.detail}`)
+    assert.ok(
+      movingAir.value.longestSec < frozenAir.value.longestSec,
+      `moving (${movingAir.value.longestSec}s) must have less dead air than frozen (${frozenAir.value.longestSec}s)`,
+    )
   } finally {
     await removeWorkDir(workDir)
   }

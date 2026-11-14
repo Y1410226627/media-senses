@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Mask reveal</title>
+<style>
+  html, body { margin: 0; height: 100%; background: var(--ms-bg, #101014); overflow: hidden; }
+  /* Authored at 1920x1080 and scaled to the viewport. */
+  #stage { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px;
+           display: grid; place-items: center; transform-origin: 0 0; }
+  #reveal { position: relative; overflow: hidden; }
+  #glyphs { font-family: var(--ms-font, "Microsoft YaHei", sans-serif); font-weight: 800; white-space: nowrap; }
+  #bar { position: absolute; top: 0; bottom: 0; width: 0; background: var(--ms-accent, #ff5a3c); }
+  #rule { position: absolute; left: 50%; transform: translateX(-50%); height: 3px; background: var(--ms-ink, #f4f1ea); }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="reveal">
+    <div id="glyphs"></div>
+    <div id="bar"></div>
+  </div>
+  <div id="rule"></div>
+</div>
+<script>
+/*
+ * Mask reveal: a solid block sweeps across the title and uncovers it, the block
+ * then retreats, and a rule draws itself underneath. The reveal edge is the only
+ * thing that moves — the glyphs themselves never fade in.
+ */
+const DEFAULTS = {
+  text: '先遮住，再揭开',
+  sub: '',
+  bg: '#101014',
+  ink: '#f4f1ea',
+  accent: '#ff5a3c',
+  size: 118,
+  sweep: 0.62,      // seconds for the block to cross
+  ruleDelay: 0.12,  // after the sweep ends
+  ruleDuration: 0.5,
+  direction: 'ltr', // ltr | rtl
+}
+
+const cfg = Object.assign({}, DEFAULTS, window.__MS_TEMPLATE || {})
+document.documentElement.style.setProperty('--ms-bg', cfg.bg)
+document.documentElement.style.setProperty('--ms-accent', cfg.accent)
+document.documentElement.style.setProperty('--ms-ink', cfg.ink)
+
+const glyphs = document.getElementById('glyphs')
+const bar = document.getElementById('bar')
+const rule = document.getElementById('rule')
+glyphs.textContent = cfg.text
+glyphs.style.fontSize = cfg.size + 'px'
+glyphs.style.color = cfg.ink
+rule.style.width = '0px'
+
+const DURATION = Number(window.__MS_DURATION) > 0 ? Number(window.__MS_DURATION) : 4
+const easeInOut = (x) => { const v = Math.max(0, Math.min(1, x)); return v < 0.5 ? 2 * v * v : 1 - Math.pow(-2 * v + 2, 2) / 2 }
+
+// Author at 1920x1080, scale to the render viewport.
+const stage = document.getElementById('stage')
+function fitStage() {
+  stage.style.transform = 'scale(' + Math.min(window.innerWidth / 1920, window.innerHeight / 1080).toFixed(5) + ')'
+}
+fitStage()
+window.addEventListener('resize', fitStage)
+
+// Width of the title is measured once, after layout. `offsetWidth` is the
+// *untransformed* layout width, which is what the bar needs: the stage is
+// CSS-scaled, and getBoundingClientRect() would return the scaled size instead.
+let boxWidth = 0
+window.renderAt = async function (t) {
+  if (boxWidth === 0) {
+    boxWidth = Math.max(1, glyphs.offsetWidth || Math.round(glyphs.getBoundingClientRect().width))
+    bar.parentElement.style.width = boxWidth + 'px'
+    rule.style.top = Math.round(glyphs.offsetHeight + 42) + 'px'
+    rule.style.width = Math.round(boxWidth * 0.42) + 'px'
+  }
+  const sweep = cfg.sweep
+  // The bar starts at full width (the title is hidden) and retreats to one side,
+  // uncovering the text. Starting covered — rather than growing a bar over
+  // visible text — is what makes this read as a reveal.
+  const p = easeInOut(t / sweep)
+  let coverStart
+  let coverWidth
+  if (cfg.direction === 'rtl') {
+    coverStart = 0
+    coverWidth = boxWidth * (1 - p)
+  } else {
+    coverStart = boxWidth * p
+    coverWidth = boxWidth * (1 - p)
+  }
+  bar.style.left = Math.round(Math.max(0, coverStart)) + 'px'
+  bar.style.width = Math.round(Math.max(0, coverWidth)) + 'px'
+  bar.style.opacity = coverWidth > 1 ? '1' : '0'
+
+  const ruleP = easeInOut((t - sweep - cfg.ruleDelay) / cfg.ruleDuration)
+  rule.style.width = Math.round(boxWidth * 0.42 * ruleP) + 'px'
+  rule.style.opacity = String(Math.min(1, ruleP * 1.4))
+}
+</script>
+</body>
+</html>
