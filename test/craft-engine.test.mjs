@@ -581,6 +581,20 @@ async function main() {
       assert.ok(craft.beatSync.cutsOnBeatRatio !== null, 'cutsOnBeatRatio should be measurable')
       assert.ok(craft.beatSync.cutsOnBeatRatio >= 0.5, `cutsOnBeatRatio=${craft.beatSync.cutsOnBeatRatio}`)
       assert.ok(Math.abs(craft.beatSync.meanOffsetMs) <= 120, `meanOffsetMs=${craft.beatSync.meanOffsetMs}`)
+      // Absolute-offset distribution: a mean over signed offsets cancels out and
+      // can hide one badly-synced cut among many perfect ones.
+      assert.ok(Number.isFinite(craft.beatSync.medianAbsOffsetMs), `medianAbsOffsetMs=${craft.beatSync.medianAbsOffsetMs}`)
+      assert.ok(Number.isFinite(craft.beatSync.p80AbsOffsetMs), `p80AbsOffsetMs=${craft.beatSync.p80AbsOffsetMs}`)
+      assert.ok(craft.beatSync.medianAbsOffsetMs >= 0)
+      assert.ok(
+        craft.beatSync.p80AbsOffsetMs >= craft.beatSync.medianAbsOffsetMs,
+        `p80 (${craft.beatSync.p80AbsOffsetMs}) must be at least the median (${craft.beatSync.medianAbsOffsetMs})`,
+      )
+      // The 3-frame tolerance is reported as a ratio and named in the note.
+      assert.ok(Number.isFinite(craft.beatSync.withinThreeFramesRatio), `withinThreeFramesRatio=${craft.beatSync.withinThreeFramesRatio}`)
+      assert.ok(craft.beatSync.withinThreeFramesRatio >= 0 && craft.beatSync.withinThreeFramesRatio <= 1)
+      assert.match(craft.beatSync.note, /3 frames/u)
+      assert.match(craft.beatSync.note, /p80/u)
       assert.match(craft.beatSync.note, /beat/u)
       assert.equal(recipe.pacing.beatSync, craft.beatSync.cutsOnBeatRatio)
       assert.equal(recipe.sound.bpm, craft.beatSync.bpm)

@@ -895,6 +895,7 @@ export function apply(ctx, rawConfig) {
         plan_path: { type: 'string', description: '或者给一个包含 RenderPlan 的 JSON 文件路径。' },
         output: { type: 'string', description: '覆盖计划里的输出路径（建议绝对路径）。' },
         verify: { type: 'boolean', description: '渲染后自动用 media_watch_video 的同一套分析复核成片，默认 true。' },
+        gate: { type: 'boolean', description: '渲染后跑验收门禁（节奏/静帧/爆发/空档/音频动态五项判定），默认 true，随 verify 一起跑。' },
         targets: { type: 'object', description: '可选的对照目标（如 style-profile.json 里的 reproduction.targets），用于报告里对比差距。' },
       },
     },
@@ -950,6 +951,26 @@ export function apply(ctx, rawConfig) {
               } catch (error) {
                 notes.push(`技法复核不可用：${error instanceof Error ? error.message : String(error)}`)
               }
+              // The acceptance gate answers "would someone sit through this?" with
+              // measured legs instead of raw numbers. It reuses the shot list the
+              // analyser already produced, so it costs one small decode pass.
+              let gate = null
+              if (args.gate !== false) {
+                try {
+                  const { runGate } = await import('./lib/gate.js')
+                  gate = await runGate({
+                    tools: resolved,
+                    file: result.output,
+                    workDir: verifyWorkDir,
+                    shots: analysis.shots,
+                    plannedScenes: Array.isArray(plan.scenes) ? plan.scenes : undefined,
+                    duration: analysis.duration,
+                    signal: exec?.signal,
+                  })
+                } catch (error) {
+                  notes.push(`验收门禁未跑：${error instanceof Error ? error.message : String(error)}`)
+                }
+              }
               verify = {
                 shots: analysis.shots?.length ?? 0,
                 duration: analysis.duration,
@@ -957,6 +978,7 @@ export function apply(ctx, rawConfig) {
                 motion: analysis.global?.avgMotion,
                 bpm: analysis.audio?.tempo?.bpm ?? null,
                 craft,
+                gate,
               }
             } finally {
               await removeWorkDir(verifyWorkDir)
@@ -1008,6 +1030,8 @@ export function apply(ctx, rawConfig) {
           render_seconds: result.renderSeconds,
           verified: verify !== null,
           verify,
+          gate: verify?.gate ?? null,
+          gate_verdict: verify?.gate?.verdict ?? null,
           images,
           vision: { active: vision.active, target, profile: vision.profile, reason: vision.reason },
           elapsed_seconds: Math.round((Date.now() - startedAt) / 100) / 10,
@@ -1122,6 +1146,7 @@ export function apply(ctx, rawConfig) {
         }
       }
       const report = renderStylesReport(payload)
+      const guidance = payload.style?.guidance
       return {
         kind: 'styles',
         action,
@@ -1129,6 +1154,16 @@ export function apply(ctx, rawConfig) {
         count: Array.isArray(payload.entries) ? payload.entries.length : payload.style === undefined ? 0 : 1,
         starter: starterPath(skillDir),
         images,
+        // What defines the style vs what a new episode may swap. Only present for
+        // styles whose prompt actually has section structure.
+        guidance: guidance === undefined
+          ? undefined
+          : {
+              structured: guidance.hasStructure,
+              invariants: guidance.invariants.map((section) => section.role),
+              variables: guidance.variables.map((section) => section.role),
+              banned: guidance.banned.length,
+            },
         report,
       }
     },

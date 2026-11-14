@@ -60,7 +60,7 @@ export async function buildVideo({ tools, plan, workDir, signal, options = {} })
       "type": "image",
       "duration": 5,
       "src": "D:/abs/photo.jpg",          // 必填
-      "motion": "kenburns-in",            // none | kenburns-in | kenburns-out | pan-left | pan-right
+      "motion": "kenburns-in",            // none | kenburns-in | kenburns-out | pan-left | pan-right | pan-up | pan-down | tilt-up | tilt-down
       "fit": "cover",                     // cover | contain
       "transitionIn": "fade", "transitionDuration": 0.6
     },
@@ -105,7 +105,8 @@ export async function buildVideo({ tools, plan, workDir, signal, options = {} })
    `line_spacing`）；`animation: fade` → `fade=t=in:st=0:d=0.4`；`slide-up` → 用 `y` 表达式带 t 缓动。
    文字过长要自动缩短或缩字号（不许溢出画面）——按字符数估算宽度并降字号。
 4. **图片场景**：`-loop 1 -t D -i img` + `scale=...:force_original_aspect_ratio=increase,crop=W:H`；
-   `kenburns-in` 用 `zoompan=z='min(zoom+0.0008,1.15)'`，`pan-left/right` 用 `zoompan=x` 表达式；
+   `kenburns-in` 用 `zoompan=z='min(zoom+0.0008,1.15)'`，`pan-left/right` 用 `zoompan=x` 表达式，
+   `pan-up/down`（等价 `tilt-up/down`）用 `zoompan=y` 表达式，四向平移共用同一套 0..1 归一化行程；
    注意 zoompan 需要 `fps` 与 `d` 正确设置，输出帧数 = duration*fps。
 5. **音频**：总时长精确对齐成片；music 先 `atrim` 再 `afade`；voiceover 用 `adelay`；
    用 `amix=inputs=N:normalize=0` 混音（避免音量被均分）；最后 `loudnorm=I=<target>:TP=-1.5:LRA=11`。

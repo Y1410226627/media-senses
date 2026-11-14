@@ -22,7 +22,7 @@ import { copyFile, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promis
 import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { findBrowser, openAnimationSession, renderAnimation } from '../lib/htmlrender.js'
+import { findBrowser, openAnimationSession, renderAnimation, scanDeterminism } from '../lib/htmlrender.js'
 import { probe, resolveTools, summariseProbe } from '../lib/ffmpeg.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -487,6 +487,81 @@ try {
   }
 } finally {
   await rm(workDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }).catch(() => undefined)
+}
+
+// The source scan is a pure function: it runs whether or not a browser exists,
+// and it exists so that nondeterminism is named before a slow render starts.
+await check('scanDeterminism finds Date.now, performance.now, rAF and timers with line numbers', () => {
+  const source = [
+    'const a = Date.now()',
+    'const b = performance.now() / 1000',
+    'requestAnimationFrame(function tick() { requestAnimationFrame(tick) })',
+    'setInterval(() => {}, 100)',
+    'const clean = t * 2',
+    'const when = new Date()',
+  ].join('\n')
+  const hits = scanDeterminism(source)
+  const kinds = hits.map((hit) => hit.kind)
+  assert.deepEqual(
+    [...new Set(kinds)].sort(),
+    ['Date.now', 'new Date', 'performance.now', 'requestAnimationFrame', 'timer'].sort(),
+  )
+  const dateHit = hits.find((hit) => hit.kind === 'Date.now')
+  assert.equal(dateHit.line, 1)
+  assert.equal(dateHit.column, 11)
+  assert.match(dateHit.message, /Date\.now/u)
+  assert.deepEqual(scanDeterminism('window.renderAt = async (t) => { draw(t) }'), [])
+  assert.deepEqual(scanDeterminism(''), [])
+  assert.deepEqual(scanDeterminism(undefined), [])
+})
+
+await check('scanDeterminism reports every call site, not just the first per line', () => {
+  const hits = scanDeterminism('Date.now(); Date.now(); Date.now()')
+  assert.equal(hits.length, 3)
+  // `Date.now();` is 11 chars, so the sites start at 1-based columns 1, 13, 25.
+  assert.deepEqual(hits.map((hit) => hit.column), [1, 13, 25])
+})
+
+if (browser !== undefined) {
+  await check('a page that calls Date.now() renders and reports the scan as a warning', async () => {
+    const scanDir = await mkdtemp(join(tmpdir(), 'media-senses-scan-test-'))
+    try {
+      const scanHtml = join(scanDir, 'scan.html')
+      await writeFile(
+        scanHtml,
+        `<!doctype html><html><body style="margin:0"><canvas id="c" width="640" height="360"></canvas>
+<script>
+  const ctx = document.getElementById('c').getContext('2d')
+  const seed = Date.now()
+  window.renderAt = async (t) => {
+    for (let i = 0; i < 240; i += 1) {
+      ctx.fillStyle = 'hsl(' + ((t * 90 + i * 6) % 360) + ',70%,' + (25 + (i % 7) * 8) + '%)'
+      ctx.fillRect((i * 53) % 640, (i * 31) % 360, 70, 46)
+    }
+  }
+</script></body></html>`,
+        'utf8',
+      )
+      const result = await renderAnimation({
+        tools,
+        htmlPath: scanHtml,
+        output: join(scanDir, 'scan.mp4'),
+        width: 640,
+        height: 360,
+        fps: 10,
+        duration: 1,
+        workDir: join(scanDir, 'work-scan'),
+      })
+      assert.ok(result.frames > 0)
+      const joined = result.warnings.join('\n')
+      assert.match(joined, /Date\.now/u, `expected a Date.now warning, got: ${joined}`)
+      assert.match(joined, /源码扫描/u)
+    } finally {
+      await rm(scanDir, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 }).catch(() => undefined)
+    }
+  })
+} else {
+  skip('a page that calls Date.now() renders and reports the scan as a warning', noRenderReason)
 }
 
 console.log('')

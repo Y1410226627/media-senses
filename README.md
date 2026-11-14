@@ -1,4 +1,4 @@
-﻿# Media Senses · 视听感知与仿制
+# Media Senses · 视听感知与仿制
 
 > 给**纯文本大模型**装上眼睛、耳朵和一台剪辑机：**看懂视频、听懂音乐、看见屏幕**，
 > 还能**批量学习一个品类的做法，然后自己仿制成片**。
@@ -216,11 +216,33 @@ plugin_manager(action="install_bundle", target="D:\\桌面\\装插件\\media-sen
 | `plan_path` | string | 或者给一个包含 RenderPlan 的 JSON 文件 |
 | `output` | string | 覆盖输出路径 |
 | `verify` | boolean | 渲染后自动用同一套感知工具复核，默认 true |
+| `gate` | boolean | 渲染后跑验收门禁（见下节），默认 true |
 | `targets` | object | 对照目标（可直接用 `style-profile.json` 里的 `reproduction.targets`） |
 
-场景类型：`text`（中文字体/淡入/自动缩字号）、`image`（Ken Burns 推拉）、`gradient`、`color`、
-`video`（任意 mp4 片段，含代码动画片段）；转场 20+ 种 xfade；`audio.music` + `audio.voiceover`
+场景类型：`text`（中文字体/淡入/自动缩字号）、`image`（Ken Burns 推拉 / 四向平移）、`gradient`、
+`color`、`video`（任意 mp4 片段，含代码动画片段）；转场 20+ 种 xfade；`audio.music` + `audio.voiceover`
 （可以给文字让它用本机 TTS 念）；`loudnorm` 归一到目标 LUFS。成片**一定**有一条音频流。
+
+图片场景的运镜：`none`、`kenburns-in`、`kenburns-out`、`pan-left`、`pan-right`、`pan-up`、`pan-down`
+（`tilt-up` / `tilt-down` 与 `pan-up` / `pan-down` 等价，可以直接把 `media_watch_video` 测出来的
+运镜标签回填给渲染器）。
+
+### 验收门禁：它像片，还是像 PPT
+
+每次渲染后（`gate: true`，默认开）多跑一道门禁，**只用像素与音频测量**，给五项带阈值的判定：
+
+| 项 | 判据 | 来源 |
+|----|------|------|
+| 镜头长度变化 | 镜头长变异系数 ≥ 0.25 | 等长镜头就是节拍器，哪怕每镜内部在动 |
+| 静帧比例 | 静帧 ≥ 25%，且有一段 ≥ 1 s | 没有停顿的片子看得很累 |
+| 变化爆发 | 1.5 s 内 ≥ 3 次大变化算一处爆发 | 全片均匀＝卡片翻页 |
+| 静止空档 | 连续 ≥ 3 s 无任何变化 = 未过 | 观众会以为卡住了 |
+| 音频动态 | 峰值 ≤ −3 dBFS、无削波、安静片段 ≥ 15% | 一直很响就听不出重点 |
+
+规则是「**只有 FAIL 才算未通过**」：`WARN` 是要你看着办并说明理由（比如一条连续运镜的作品本来
+就没有爆发）。渐变色转场会让硬切检测看不见切点，这时 `cadence` 自动回退到**分镜里写的场景时长**——
+量的是你剪的节奏，而不是检测器的脾气。判定会写进报告「## 验收门禁」一节，同时出现在工具返回值的
+`gate_verdict` / `gate.legs` 里，可以据此改分镜重渲。
 
 ### `media_tts` — 本机中文旁白
 
@@ -243,6 +265,11 @@ plugin_manager(action="install_bundle", target="D:\\桌面\\装插件\\media-sen
 素材来自本机 `~/.dsh/skills/code-animation-prompts`（可用配置 `skillDir` 覆盖），含 341 条提示词、
 196 张参考静帧；`show` 会把参考静帧直接作为图片附在结果里。
 
+`show` 还会把提示词**按节拆开**，分成「**不可改**（改了就是另一种风格：本质／材质／配色逻辑）」
+与「**可替换**（换本集内容时改这些：字体／声音／可变空间／输出规格）」，并单独摘出这条风格自己
+点名的禁用项。库里的提示词有三种排版（11 节的 Lemo 版、标题式的 mg 版、整段散文的 A-G/Z 版），
+解析器统一归一，没有分节的会明说「整段散文，只替换内容」。
+
 ### `media_animate` — 把代码动画渲成视频片段
 
 | 参数 | 类型 | 说明 |
@@ -257,6 +284,10 @@ plugin_manager(action="install_bundle", target="D:\\桌面\\装插件\\media-sen
 随机数用固定种子。渲染器用本机 headless Edge + CDP 逐帧截图（1×1 flush 防黑帧、强制视口裁剪、
 冻结时钟、逐帧重置随机种子），ffmpeg 编码，**不需要安装 Playwright**。实测 720×1280@24fps 6 秒
 约 155 秒（约 1 秒/帧），建议先渲短片段预览。
+
+渲染**前**会先静态扫一遍 HTML 源码，把 `Date.now()` / `performance.now()` / `requestAnimationFrame` /
+定时器这类非确定性调用**点名到行列号**写进警告——确定性注入层通常能兜住，但一旦成片出现跳帧或
+循环不动，第一个要查的就是这里，而十分钟渲染完之后才发现太亏。
 ### `media_see` — 看屏幕（吸收自 dsh-see-now）
 
 | 参数 | 类型 | 说明 |
@@ -552,18 +583,20 @@ node demo/run-demo.mjs          # 单条感知（01–05 号报告）
 node test/shell-smoke.mjs        # 外壳：二进制探测、ffprobe、单帧分析、PNG、whisper 转写      9 项
 node test/audio-engine.test.mjs  # 音频引擎（120BPM / C大调 合成夹具，23 DSP + 32 集成）       55 项
 node test/video-engine.test.mjs  # 视频引擎（3 场景 合成夹具 + 退化用例）                      23 项
-node test/craft-engine.test.mjs  # 制作技法：运镜/转场/调色/卡点/配方                         19 项
+node test/craft-engine.test.mjs  # 制作技法：运镜/转场/调色/卡点分位/配方                      19 项
 node test/build-engine.test.mjs  # 合成引擎：分镜→成片、TTS、转场、字幕、响度、退化用例       29 项
-node test/corpus.test.mjs        # 批量语料：展开/缓存/画像/骨架                              17 项
+node test/corpus.test.mjs        # 批量语料：展开/缓存/画像/骨架                              18 项
 node test/change.test.mjs        # 变化量打分与选帧：切点/积分/兜底（吸收 dsh-see-now）       19 项
 node test/screen.test.mjs        # 屏幕采集 + token 对齐拼图（含真实截屏）                   23 项
-node test/htmlrender.test.mjs    # 代码动画渲染：CDP、确定性、黑帧检测、降级                  14 项
+node test/htmlrender.test.mjs    # 代码动画渲染：CDP、确定性、源码扫描、黑帧检测、降级          17 项
+node test/gate.test.mjs          # 验收门禁：节奏/静帧/爆发/空档/音频五条腿的阈值与回退         15 项
+node test/styles-guidance.test.mjs # 风格提示词分节：不可改/可替换/禁用项（含真实库）         13 项
 node test/e2e.mjs                # v1 端到端：真实调用感知工具                                9 项
 node test/vision.test.mjs        # 视觉适配：能力探测、图片预算、裁剪、多帧/对比报告         19 项
 node test/montage.test.mjs       # 时间条/对比图拼装与参考 vs 成片差异度量                    19 项
 node test/vision-render.test.mjs # blind/vision 双模式报告（含 blind 逐字节回归）              31 项
 node test/e2e-v2.mjs             # 全链路：学→取风格→造画面→合成→回测→看屏幕                16 项
-                                   —— 合计 302 项断言，全部通过
+                                   —— 合计 334 项断言，全部通过
 ```
 
 夹具是**合成**的，因此有 ground truth 可比：音频夹具是 120 BPM、C 大调、4/4、24 秒的鼓+贝斯+旋律

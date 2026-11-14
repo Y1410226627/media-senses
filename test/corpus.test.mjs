@@ -182,6 +182,19 @@ await check('profile has a reproduction checklist and a RenderPlan skeleton', ()
   assert.ok(plan.output.length > 0)
 })
 
+await check('the skeleton note explains itself when the scene count is bounded', () => {
+  const brief = profile.reproduction.brief
+  assert.equal(typeof brief.note, 'string')
+  assert.ok(brief.note.length > 10)
+  // The note must always say what to replace; the scene-count explanation is
+  // appended only when the count had to be moved off the raw estimate.
+  assert.match(brief.note, /骨架/u)
+  if (Array.isArray(brief.plan?.scenes) && brief.plan.scenes.length >= 2) {
+    assert.ok(brief.plan.scenes.length <= 12, 'the skeleton never exceeds the 12-scene usability cap')
+    assert.ok(brief.plan.scenes.length >= 2, 'the skeleton always has at least two scenes')
+  }
+})
+
 await check('profile markdown renders all sections', () => {
   assert.equal(typeof markdown, 'string')
   for (const heading of ['# 风格画像', '## 一眼结论', '## 节奏与剪辑', '## 运镜', '## 调色', '## 声音', '## 仿制清单', '## 样本清单']) {
