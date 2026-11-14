@@ -1,4 +1,4 @@
-# Media Senses · 视听感知与仿制
+﻿# Media Senses · 视听感知与仿制
 
 > 给**纯文本大模型**装上眼睛、耳朵和一台剪辑机：**看懂视频、听懂音乐、看见屏幕**，
 > 还能**批量学习一个品类的做法，然后自己仿制成片**。
@@ -565,26 +565,60 @@ media-senses/
 
 ## 7. 参考与致谢（思路来源）
 
-这块拼图是站在这些开源工作上的：
+这块拼图是站在这些开源工作上的。**逐项许可、吸收了什么、有没有真的落地**都在
+[THIRD-PARTY.md](THIRD-PARTY.md)（含「已落地 / 只读过 / 不可吸收」三档标注），这里只给全貌。
+
+### 7.1 上一轮（v0.1–0.4）
 
 | 项目 | 借了什么 |
 |------|----------|
-| [FFmpeg](https://github.com/FFmpeg/FFmpeg) | 全部解码；`signalstats` / `scdet` / `freezedetect` / `blackdetect` / `ebur128` / `showspectrumpic` 等滤镜；FFmpeg 8+ 内置 `whisper` 滤镜做本地 ASR |
-| [whisper.cpp](https://github.com/ggml-org/whisper.cpp) | ggml 模型格式与 whisper 模型权重（插件只下载权重，推理在 ffmpeg 内） |
-| [PySceneDetect](https://github.com/Breakthrough/PySceneDetect) | 内容检测的自适应思路：`score/邻域均值 ≥ 3.0 且 score ≥ 15` 抑制镜头晃动误判 |
-| [librosa](https://github.com/librosa/librosa) | onset 包络、自相关 tempo、色度、自相似矩阵/Foote novelty 的算法参考 |
-| [Essentia](https://essentia.upf.edu/) | 描述符字段组织的参考（bpm、key、loudness_ebu128 等） |
+| [FFmpeg](https://github.com/FFmpeg/FFmpeg) | 全部解码；`signalstats` / `scdet` / `freezedetect` / `blackdetect` / `ebur128` / `showspectrumpic` 等滤镜；内置 `whisper` 滤镜做本地 ASR |
+| [whisper.cpp](https://github.com/ggml-org/whisper.cpp) | ggml 模型格式与 whisper 权重（推理在 ffmpeg 内） |
+| [PySceneDetect](https://github.com/Breakthrough/PySceneDetect) | 内容检测的自适应判据：用邻域比值抑制镜头晃动误判 |
+| [librosa](https://github.com/librosa/librosa) | onset 包络、自相关 tempo、色度、自相似矩阵 / Foote novelty |
+| [Essentia](https://essentia.upf.edu/) | 描述符字段组织（bpm / key / loudness_ebu128 等） |
 | [claude-real-video](https://github.com/HUANGCHIHHUNGLeo/claude-real-video) | 「场景切点 + 密度补帧 + 去重 + 联系表 + MANIFEST」的多模态喂帧架构 |
-| [vidmcp](https://github.com/ethnn-b/vidmcp) | MCP 视频工具的参数设计与按 token 预算限制帧数的经验 |
-| [ASCIIEval](https://arxiv.org/abs/2410.01733) | 验证了「小尺寸 ASCII 图能被 LLM 有一定程度地读懂」，因此字符图保持小而密 |
-| [MCP 规范](https://modelcontextprotocol.io/) | 工具结果可携带图像块的设计，本插件用「存图 + 路径」实现等价效果 |
-| [HyperFrames](https://github.com/heygen-com/hyperframes) | HTML→视频的工程化经验：`beginFrame` 已在 Chromium 147+ 移除、必须走截图路径；1×1 flush 防黑帧、PNG 不能用 optimizeForSpeed、并行用多进程而非多标签页 |
-| [chrome-remote-interface](https://github.com/cyrus-and/chrome-remote-interface) | 极简 CDP 客户端的结构（id→promise、会话路由），本插件的渲染器按同样思路用 Node 全局 WebSocket 手写 |
-| [Remotion](https://github.com/remotion-dev/remotion) / [Motion Canvas](https://github.com/motion-canvas/motion-canvas) | 「代码即视频」的工程范式与逐帧导出流程 |
-| [editly](https://github.com/mifi/editly) | JSON 时间线 → ffmpeg 参数构建器 的思路 |
-| [dsh-see-now](https://github.com/SAOS-3624/dsh-see-now) | 变化量选帧（64×36 HSV 变化分、尖峰/积分/兜底三条件）、多帧拼一张图、**42px token 对齐**与 ows×(cols+1)+2 估算——分别落在 lib/change.js / lib/screen.js / media_see；详见 [THIRD-PARTY.md](THIRD-PARTY.md) |
-| [code-animation-prompts](https://github.com/) 技能 | 本机 `~/.dsh/skills` 里的 341 个风格提示词 + `renderAt(t)` 渲染契约（已并入 media_styles/media_animate） |
+| [vidmcp](https://github.com/ethnn-b/vidmcp) | MCP 视频工具的参数设计与按 token 预算限帧 |
+| [ASCIIEval](https://arxiv.org/abs/2410.01733) | 验证了「小尺寸 ASCII 图 LLM 能读」，因此字符图保持小而密 |
+| [MCP 规范](https://modelcontextprotocol.io/) | 工具结果携带图像块的设计 |
+| [chrome-remote-interface](https://github.com/cyrus-and/chrome-remote-interface) | 极简 CDP 客户端结构（id→promise、会话路由），渲染器按同思路手写 |
+| [Remotion](https://github.com/remotion-dev/remotion) / [Motion Canvas](https://github.com/motion-canvas/motion-canvas) | 「代码即视频」范式与逐帧导出流程 |
+| [editly](https://github.com/mifi/editly) | JSON 时间线 → ffmpeg 参数构建器 |
+| [dsh-see-now](https://github.com/SAOS-3624/dsh-see-now) | 变化量选帧（64×36 HSV 变化分、尖峰/积分/兜底）、多帧拼图、**42px token 对齐**与 `rows×(cols+1)+2` 估算 —— 落在 `lib/change.js` / `lib/screen.js` / `media_see` |
+| code-animation-prompts 技能 | 本机 `~/.dsh/skills` 的 341 个风格提示词 + `renderAt(t)` 渲染契约（`media_styles` / `media_animate`） |
 
+### 7.2 第二批：18 个仓库（v0.5–0.6）
+
+决定「但凡这些技能能做出的效果，本插件也能复刻」的那一批。**全部真实存在，逐一读过 README / SKILL.md，
+只吸收方法、阈值与工程结论，未复制任何源码、提示词原文或参考帧。**
+
+| 项目 | 给了我们什么 | 落在哪 |
+|------|--------------|--------|
+| [HyperFrames](https://github.com/heygen-com/hyperframes) | 声明式 clip 契约、`__timelines` 适配器、合成内音频多轨、快门角运动模糊、渲染前 lint | `lib/htmlrender.js`、`lib/animaudio.js`、`lib/gate.js` |
+| [mg-styles-15](https://github.com/Vincentwei1021/mg-styles-15) | `document.getAnimations()` 逐帧 seek（普通 CSS 动画可渲）、`tmix` 运动模糊 | `lib/htmlrender.js` |
+| [onetake](https://github.com/feitangyuan/onetake) | 镜头承接判据：携带 / 锚定 / 裸切与 0.5、0.7 门槛 | `lib/continuity.js` |
+| [supervision](https://github.com/roboflow/supervision) | 「区域占用时长」当一等指标 | `lib/continuity.js` |
+| [video-shotcraft](https://github.com/Vincentwei1021/video-shotcraft) | 镜头配方卡的「参数 / 典型值 / 调节手感」三列表、卡点分位验收 | `lib/shots.js`、`lib/craft.js` |
+| [cinecode](https://github.com/sarpstar/cinecode) | 速度词量化、缓动词 5 档语义、转场默认时长、cut seam 硬规则 | `lib/moves.js` |
+| [huashu-art-motion](https://github.com/alchaincyf/huashu-art-motion) | 反 PPT 门禁、笔数/时长预算量级 | `lib/gate.js`、`lib/shots.js` |
+| [claude-animated-shorts](https://github.com/mromidev/claude-animated-shorts) | 成片自检阈值；角色表演的量化（步频、起伏、眨眼形状、蓄力-击出-回收） | `lib/gate.js`、`lib/performance.js` |
+| [lemo-opuscar](https://github.com/lemomo-ai/lemo-opuscar) | 「不可改 / 改变性格 / 可自由改」三分法、8 套外观的参数分组 | `lib/styles.js`、`lib/look.js` |
+| [sweety-handdraw-video](https://github.com/threerocks/sweety-handdraw-video) | 笔数预算 3.9 / 6 笔每秒、按部位描线 | `lib/shots.js`、手绘模板 |
+| [bang-motion](https://github.com/bangtutorial/bang-motion) | 反 PPT 的六条可编程检查、字号下限 | `lib/gate.js`、`lib/lint.js` |
+| [anidoodle](https://github.com/alexgreensh/anidoodle) | 三层验收工具链分层、逐帧抖动（line boil） | `lib/gate.js`、`lib/lint.js`、手绘模板 |
+| [cth9191/animate](https://github.com/cth9191/animate) | 交付期实测验收（卡点 / 响度 / 主体锚定 / 语速） | `lib/gate.js` |
+| [ClaudeAnimationBase](https://github.com/JohnHeibel/ClaudeAnimationBase) | 情绪用「命名姿态 + 面部状态」参数化 | `lib/performance.js` |
+| [awesome-opus5-5-videos](https://github.com/yihui-dev/awesome-opus5-5-videos) | 只作分类参考 | 仅阅读 |
+| [OpenMontage](https://github.com/calesthio/OpenMontage) | 只读了「slideshow risk」维度划分（AGPL，未取代码） | 仅阅读 |
+| [opus-video-prompts](https://github.com/joeseesun/opus-video-prompts) | 无许可，完全未用 | — |
+| [remotion-dev/skills](https://github.com/remotion-dev/skills) | 只参考了技能描述形态 | 仅阅读 |
+
+**许可红线**：`onetake`(PolyForm 非商用)、`OpenMontage`(AGPL)、`opus-video-prompts`(无许可) 只学思路，
+**一行代码与提示词原文都没进仓库**；`lemo-opuscar` 文档是 CC BY-NC，只借章节结构，未复制文本；
+`claude-animated-shorts` 的参考帧标注不可再分发，只取阈值数字。逐项见
+[THIRD-PARTY.md](THIRD-PARTY.md) 第 2.3 节。
+
+*若发现任何段落与上游文本雷同，属疏漏，请提 issue，我们会立即改写并补署名。*
 ---
 
 ## 8. 真实素材演示
@@ -695,6 +729,7 @@ node test/anim-runtime.test.mjs  # 运行时平权：CSS/WAAPI seek、声明式�
 node test/templates.test.mjs     # 10 个模板逐个真渲一遍，断言帧在动、参数生效                25 项
 node test/adapters-performance.test.mjs # Lottie/Three/Anime/自研适配器 + 角色表演规则          29 项
 node test/capability.test.mjs    # 目标能力审计：26 项能力逐条核对实现与测试                  26 项
+node test/attribution.test.mjs   # 署名完整性：18 个仓库各出现一次、许可红线、落地路径存在      11 项
 node test/gate.test.mjs          # 验收门禁：节奏/静帧/爆发/空档/音频五条腿 + 稀疏运动            16 项
 node test/styles-guidance.test.mjs # 风格提示词分节：不可改/可替换/禁用项（含真实库）         13 项
 node test/vocabulary.test.mjs    # 词汇库：12 曲线 + 弹簧、18 运镜、9 转场、8 外观、15 反模式    30 项
@@ -706,7 +741,7 @@ node test/vision.test.mjs        # 视觉适配：能力探测、图片预算、
 node test/montage.test.mjs       # 时间条/对比图拼装与参考 vs 成片差异度量                    19 项
 node test/vision-render.test.mjs # blind/vision 双模式报告（含 blind 逐字节回归）              31 项
 node test/e2e-v2.mjs             # 全链路：学→取风格→造画面→合成→回测→看屏幕                16 项
-                                   —— 合计 547 项断言，全部通过
+                                   —— 合计 558 项断言，全部通过
 ```
 
 夹具是**合成**的，因此有 ground truth 可比：音频夹具是 120 BPM、C 大调、4/4、24 秒的鼓+贝斯+旋律
@@ -730,6 +765,7 @@ code-animation-prompts 技能、FFmpeg、whisper.cpp、PySceneDetect、librosa�
 
 > 使用提醒：批量下载、分析与仿制视频时，请自行确认素材的版权与所在站点的服务条款；屏幕采集只在
 > 本机进行、不联网上传，可用 `allowScreenCapture: false` 关闭。
+
 
 
 
