@@ -694,6 +694,7 @@ node test/htmlrender.test.mjs    # 代码动画渲染：CDP、确定性、源码
 node test/anim-runtime.test.mjs  # 运行时平权：CSS/WAAPI seek、声明式时间轴、运动模糊、页内音频  20 项
 node test/templates.test.mjs     # 10 个模板逐个真渲一遍，断言帧在动、参数生效                25 项
 node test/adapters-performance.test.mjs # Lottie/Three/Anime/自研适配器 + 角色表演规则          29 项
+node test/capability.test.mjs    # 目标能力审计：26 项能力逐条核对实现与测试                  26 项
 node test/gate.test.mjs          # 验收门禁：节奏/静帧/爆发/空档/音频五条腿 + 稀疏运动            16 项
 node test/styles-guidance.test.mjs # 风格提示词分节：不可改/可替换/禁用项（含真实库）         13 项
 node test/vocabulary.test.mjs    # 词汇库：12 曲线 + 弹簧、18 运镜、9 转场、8 外观、15 反模式    30 项
@@ -705,7 +706,7 @@ node test/vision.test.mjs        # 视觉适配：能力探测、图片预算、
 node test/montage.test.mjs       # 时间条/对比图拼装与参考 vs 成片差异度量                    19 项
 node test/vision-render.test.mjs # blind/vision 双模式报告（含 blind 逐字节回归）              31 项
 node test/e2e-v2.mjs             # 全链路：学→取风格→造画面→合成→回测→看屏幕                16 项
-                                   —— 合计 549 项断言，全部通过
+                                   —— 合计 547 项断言，全部通过
 ```
 
 夹具是**合成**的，因此有 ground truth 可比：音频夹具是 120 BPM、C 大调、4/4、24 秒的鼓+贝斯+旋律
