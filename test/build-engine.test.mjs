@@ -17,6 +17,7 @@
  * stable temp path and printed so it can be inspected afterwards.
  */
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { copyFile, mkdir, readFile, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -29,7 +30,7 @@ import {
   run,
 } from '../lib/ffmpeg.js'
 import { Canvas } from '../lib/png.js'
-import { buildVideo } from '../lib/build.js'
+import { buildVideo, duckGainExpression } from '../lib/build.js'
 import { listVoices, synthesizeSpeech } from '../lib/tts.js'
 
 // Target content of the contract's acceptance plan.
@@ -868,6 +869,174 @@ async function main() {
     const frozenB = await frameStats(state, result.output, 1.95)
     assert.ok(Math.abs(frozenA.yavg - frozenB.yavg) < 2, `frozen tail changed brightness: ${frozenA.yavg} vs ${frozenB.yavg}`)
     assert.ok(Math.abs(frozenA.ymax - frozenB.ymax) < 4, `frozen tail changed content: ${frozenA.ymax} vs ${frozenB.ymax}`)
+  })
+
+  await check('build: video scene plays at a different rate without changing the slot length', async () => {
+    const slowPlan = {
+      output: join(state.workDir, 'rate', 'slow.mp4'),
+      width: 320,
+      height: 568,
+      fps: 25,
+      scenes: [{ type: 'video', duration: 1, src: state.segmentPath, fit: 'cover', rate: 0.5 }],
+    }
+    const commands = []
+    const result = await buildVideo({
+      tools: state.tools,
+      plan: slowPlan,
+      workDir: state.workDir,
+      options: { onCommand: (command) => commands.push(command) },
+    })
+    assert.equal(result.ok, true, `warnings: ${result.warnings.join(' | ')}`)
+    // The slot length is the authored duration, not the source length.
+    assert.equal(result.duration, 1, `rate must not change the timeline, got ${result.duration}`)
+    const graphs = assertFiltergraphsAreRelative(commands)
+    assert.ok(
+      graphs.some((graph) => graph.includes('setpts=PTS/0.5')),
+      'expected a setpts speed change in the scene filtergraph',
+    )
+  })
+
+  await check('build: hold freezes the tail of a video scene inside its own slot', async () => {
+    const plan = {
+      output: join(state.workDir, 'hold', 'out.mp4'),
+      width: 320,
+      height: 568,
+      fps: 25,
+      scenes: [{ type: 'video', duration: 2, src: state.segmentPath, fit: 'cover', hold: 0.6 }],
+    }
+    const result = await buildVideo({ tools: state.tools, plan, workDir: state.workDir })
+    assert.equal(result.ok, true, `warnings: ${result.warnings.join(' | ')}`)
+    assert.equal(result.duration, 2, 'hold must not lengthen the timeline')
+    // The last 0.6 s is a still frame: two samples inside it must match.
+    const a = await frameStats(state, result.output, 1.6)
+    const b = await frameStats(state, result.output, 1.95)
+    assert.ok(Math.abs(a.yavg - b.yavg) < 2, `hold tail changed: ${a.yavg} vs ${b.yavg}`)
+    assert.ok(Math.abs(a.ymax - b.ymax) < 4, `hold tail content changed: ${a.ymax} vs ${b.ymax}`)
+  })
+
+  await check('build: an overlay appears only inside its window', async () => {
+    // A solid red badge over a black base: presence is a pixel fact, not a guess.
+    const badge = join(state.workDir, 'overlay-badge.png')
+    await run(state.tools.ffmpeg, [
+      '-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0xff3355:s=240x140:d=1',
+      '-frames:v', '1', 'overlay-badge.png',
+    ], { cwd: state.workDir })
+    const plan = {
+      output: join(state.workDir, 'overlay', 'out.mp4'),
+      width: 320,
+      height: 180,
+      fps: 10,
+      scenes: [{ type: 'color', duration: 4, background: '#000000' }],
+      overlays: [{ src: badge, start: 1, end: 3, position: 'bottom-right', width: 0.3, opacity: 1 }],
+    }
+    const result = await buildVideo({ tools: state.tools, plan, workDir: state.workDir })
+    assert.equal(result.ok, true, `warnings: ${result.warnings.join(' | ')}`)
+    assert.equal(result.duration, 4, 'overlays are a separate track and must not change the timeline')
+
+    // Sample the bottom-right quadrant on a small raster.
+    const quadrantMaxRed = async (time) => {
+      await run(state.tools.ffmpeg, [
+        '-v', 'error', '-y', '-ss', String(time), '-i', result.output,
+        '-frames:v', '1', '-vf', 'scale=32:18,format=rgb24', '-f', 'rawvideo', 'q.raw',
+      ], { cwd: state.workDir })
+      const buffer = await readFile(join(state.workDir, 'q.raw'))
+      let max = 0
+      for (let y = 12; y < 18; y += 1) {
+        for (let x = 21; x < 32; x += 1) {
+          const value = buffer[(y * 32 + x) * 3]
+          if (value > max) max = value
+        }
+      }
+      return max
+    }
+    assert.ok(await quadrantMaxRed(2) > 120, 'the overlay must be visible inside [1s, 3s]')
+    assert.ok(await quadrantMaxRed(0.3) < 40, 'the overlay must be absent before its window')
+    assert.ok(await quadrantMaxRed(3.6) < 40, 'the overlay must be absent after its window')
+  })
+
+  await check('build: a top-left overlay lands top-left, not by accident', async () => {
+    const badge = join(state.workDir, 'overlay-corner.png')
+    await run(state.tools.ffmpeg, [
+      '-v', 'error', '-y', '-f', 'lavfi', '-i', 'color=c=0x33ff55:s=200x120:d=1',
+      '-frames:v', '1', 'overlay-corner.png',
+    ], { cwd: state.workDir })
+    const plan = {
+      output: join(state.workDir, 'corner', 'out.mp4'),
+      width: 320,
+      height: 180,
+      fps: 10,
+      scenes: [{ type: 'color', duration: 2, background: '#000000' }],
+      overlays: [{ src: badge, start: 0, end: 2, position: 'top-left', width: 0.3 }],
+    }
+    const result = await buildVideo({ tools: state.tools, plan, workDir: state.workDir })
+    assert.equal(result.ok, true, `warnings: ${result.warnings.join(' | ')}`)
+    await run(state.tools.ffmpeg, [
+      '-v', 'error', '-y', '-ss', '1', '-i', result.output,
+      '-frames:v', '1', '-vf', 'scale=32:18,format=rgb24', '-f', 'rawvideo', 'c.raw',
+    ], { cwd: state.workDir })
+    const buffer = await readFile(join(state.workDir, 'c.raw'))
+    const greenAt = (x, y) => buffer[(y * 32 + x) * 3 + 1]
+    // ffmpeg's overlay variables are W/H = main and w/h = overlay; a mix-up puts
+    // every overlay in the corner, so both corners are asserted explicitly.
+    assert.ok(greenAt(1, 1) > 120, `top-left should hold the badge, got green=${greenAt(1, 1)}`)
+    assert.ok(greenAt(30, 16) < 60, `bottom-right should stay empty, got green=${greenAt(30, 16)}`)
+  })
+
+  await check('build: music ducks under narration by the requested amount, and only there', async () => {
+    const music = join(state.workDir, 'duck-music.wav')
+    await run(state.tools.ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=220:duration=6', '-c:a', 'pcm_s16le', 'duck-music.wav'], { cwd: state.workDir })
+    // A silent narration file: the schedule exists so ducking fires, but the voice
+    // adds no level, which isolates the bed's attenuation from the voice.
+    await run(state.tools.ffmpeg, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'anullsrc=r=16000:cl=mono', '-t', '1.5', '-c:a', 'pcm_s16le', 'duck-voice.wav'], { cwd: state.workDir })
+
+    const planFor = (duck) => ({
+      output: join(state.workDir, 'duck', `out-${duck ? 'on' : 'off'}.mp4`),
+      width: 160,
+      height: 90,
+      fps: 10,
+      loudnessTarget: null,
+      scenes: [{ type: 'color', duration: 6, background: '#101010' }],
+      audio: {
+        music,
+        musicVolumeDb: -6,
+        musicFadeOut: 0,
+        duck,
+        duckDb: -12,
+        voiceover: [{ src: join(state.workDir, 'duck-voice.wav'), start: 2 }],
+      },
+    })
+    const rms = (file, from, to) => {
+      const result = spawnSync(state.tools.ffmpeg, ['-hide_banner', '-ss', String(from), '-t', String(to - from), '-i', file, '-af', 'astats', '-f', 'null', '-'], { encoding: 'utf8' })
+      const match = /RMS level dB:\s*(-?\d+(?:\.\d+)?)/u.exec(result.stderr)
+      assert.ok(match !== null, 'astats must report an RMS level')
+      return Number.parseFloat(match[1])
+    }
+
+    const off = await buildVideo({ tools: state.tools, plan: planFor(false), workDir: state.workDir })
+    const on = await buildVideo({ tools: state.tools, plan: planFor(true), workDir: state.workDir })
+    assert.equal(on.ok, true, `warnings: ${on.warnings.join(' | ')}`)
+    // Outside the narration window the two mixes must be identical.
+    const beforeOff = rms(off.output, 0.5, 1.3)
+    const beforeOn = rms(on.output, 0.5, 1.3)
+    assert.ok(Math.abs(beforeOff - beforeOn) < 0.5, `ducking must not touch the bed outside narration: ${beforeOff} vs ${beforeOn}`)
+    // Inside the window the bed must drop by roughly duckDb.
+    const drop = rms(off.output, 2.3, 3.2) - rms(on.output, 2.3, 3.2)
+    assert.ok(drop > 8, `expected the bed to drop ~12 dB under narration, measured ${drop.toFixed(2)} dB`)
+    assert.ok(drop < 18, `ducking over-attenuated: ${drop.toFixed(2)} dB`)
+  })
+
+  await check('build: duckGainExpression is empty without narration and sums overlapping lines', () => {
+    assert.equal(duckGainExpression([], -12, 10), undefined)
+    assert.equal(duckGainExpression(undefined, -12, 10), undefined)
+    const one = duckGainExpression([{ start: 2, end: 4 }], -12, 10)
+    assert.ok(typeof one === 'string' && one.startsWith('1+'), one)
+    // Two overlapping lines must not multiply into a deeper dip.
+    const two = duckGainExpression([{ start: 2, end: 4 }, { start: 3, end: 5 }], -12, 10)
+    const depthOf = (expression) => Number.parseFloat(/-?0\.\d+/u.exec(expression)?.[0] ?? '0')
+    assert.ok(
+      Math.abs(depthOf(two) - depthOf(one)) < 0.001,
+      `overlap changed the depth: ${depthOf(one)} vs ${depthOf(two)}`,
+    )
   })
 
   await check('degenerate: missing video source is rejected with a clear error', async () => {

@@ -121,7 +121,7 @@ plugin_manager(action="install_bundle", target="D:\\桌面\\装插件\\media-sen
 
 ---
 
-## 3. 工具集（13 个）
+## 3. 工具集（14 个）
 
 ### `media_probe` — 先看看这是什么文件
 
@@ -217,6 +217,7 @@ plugin_manager(action="install_bundle", target="D:\\桌面\\装插件\\media-sen
 | `output` | string | 覆盖输出路径 |
 | `verify` | boolean | 渲染后自动用同一套感知工具复核，默认 true |
 | `gate` | boolean | 渲染后跑验收门禁（见下节），默认 true |
+| `lint` | boolean | 渲染前做版式体检（文字出框/标题与字幕打架/字号过小），默认 true |
 | `targets` | object | 对照目标（可直接用 `style-profile.json` 里的 `reproduction.targets`） |
 
 场景类型：`text`（中文字体/淡入/自动缩字号）、`image`（Ken Burns 推拉 / 四向平移）、`gradient`、
@@ -226,6 +227,17 @@ plugin_manager(action="install_bundle", target="D:\\桌面\\装插件\\media-sen
 图片场景的运镜：`none`、`kenburns-in`、`kenburns-out`、`pan-left`、`pan-right`、`pan-up`、`pan-down`
 （`tilt-up` / `tilt-down` 与 `pan-up` / `pan-down` 等价，可以直接把 `media_watch_video` 测出来的
 运镜标签回填给渲染器）。
+
+**叠加轨**（画中画 / 角标 / 浮层，`plan.overlays[]`）：每个 `{ src, start, end, position, width, opacity, fadeIn, fadeOut }`，
+`position` 九宫格（`top-left` … `bottom-right`）。叠加轨是独立于场景的**第二条轨**——场景是顺序的、占满整帧，
+叠加有自己命中的时间段、只覆盖一部分画面。字幕永远画在叠加轨之上。
+
+**变速与定格**（`video` 场景）：`rate`（0.1–10，2=两倍速、0.5=半速）改变播放速度但**不改槽位长度**；
+`hold`（秒）冻结结尾帧。两者都不影响时间线，所以分镜时长仍然精确可控。
+
+**旁白自动闪避**（`audio.duck`，默认 true；`audio.duckDb` 默认 −9）：音乐在旁白说的时候自动降下去、
+说完再回来，按旁白的**实际起止时间**生成平滑包络。不加这个，一条 −20 dB 的床仍然会和 −20 dB 的人声打架，
+这是「听起来业余」最常见的一个原因。
 
 ### 验收门禁：它像片，还是像 PPT
 
@@ -270,18 +282,51 @@ plugin_manager(action="install_bundle", target="D:\\桌面\\装插件\\media-sen
 点名的禁用项。库里的提示词有三种排版（11 节的 Lemo 版、标题式的 mg 版、整段散文的 A-G/Z 版），
 解析器统一归一，没有分节的会明说「整段散文，只替换内容」。
 
+### `media_moves` — 导演词典（说法 → 数字）
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `action` | `moves`/`transitions`/`easing`/`looks`/`antipatterns`/`rules`/`cards`/`budget`/`show` | 查什么（默认 `moves`） |
+| `query` | string | `cards` 检索词（「标题」「数据」「入场」…） |
+| `id` | string | `show` 精确取一项（`push-in` / `dissolve` / `anime-cel` / `camera.push-in`） |
+| `category` / `energy` | string | `cards` 的类目与能量筛选 |
+| `seconds` / `kind` | number / string | `budget` 的目标时长与体裁 |
+
+「缓推一下」「用硬切」「活泼一点」这类说法在这里都有确定数值：
+
+- **18 个运镜**：每个给时长区间、速度档、景别、`ffmpegMotion`（能直接写进分镜的就给 id，给不了的标「需代码动画」）与「为什么这样用」。
+- **9 个转场**：默认时长、xfade 映射、**声音怎么处理**（J-cut 提前多久、smash 同帧换声）。
+- **缓动与弹簧**：12 条命名曲线 + 按角色的选法（入场长尾 / 位移双端 / 退场加速 / 相机双端），弹簧用**阻尼比**描述「高级感」（0.7–0.85）到「卡通」（<0.3）。
+- **8 套外观预设**：cinematic / anime-cel / pastel / claymation / papercut / synthwave-vhs / commercial / ink，每套给配色、材质、光位、后期与帧率/步进。
+- **15 条「一眼 AI 味」**：紫青渐变底、粒子汤、镜光滥用、每切必 RGB split、处处霓虹、回弹缓动、全片慢动作……每条给表现、为什么露馅、怎么改（带数值）。
+- **7 条剪辑缝规则**：切在动作最快处、两侧方向速度匹配、zoom 符号不变、主体位置差 ≤1/10 画幅、运动模糊帧内不许硬切。
+- **44 张镜头配方卡**：每张有意图、运动、**参数表（参数 | 典型值 | 往哪调会怎样）**、声音、常见坑、可运行配方。第三列是关键——它说「再大就散架」而不只是「4–6 帧」。
+- **时长预算**：这个时长最多画多少笔（起形+马克笔 3.9 笔/秒、按部位上色 6 笔/秒），以及五种体裁的常见时长区间。
+
 ### `media_animate` — 把代码动画渲成视频片段
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
-| `html_path` | string | 实现 `window.renderAt(t)` 的 HTML 文件 |
+| `html_path` | string | 动画 HTML 文件 |
 | `html` | string | 或直接给 HTML 源码 |
 | `output` | string | 输出 MP4 路径 |
 | `width` / `height` / `fps` / `duration` | integer / integer / integer / number | 默认 1920×1080 / 30 / 12 |
+| `motion_blur` | integer | 运动模糊子帧数（1=关闭，2–16）。快运镜/甩镜要开 |
+| `shutter_angle` | number | 快门角 0–360，默认 180（电影常规） |
+| `mix_audio` | boolean | 把页面内 `<audio>` 混进输出，默认 true |
 | `style_id` | string | 记录所用的风格编号 |
 
-页面契约：`window.renderAt(t)` 由秒数 t 唯一决定画面；带 `?export=1` 时关闭自己的 rAF/CSS 自播放；
-随机数用固定种子。渲染器用本机 headless Edge + CDP 逐帧截图（1×1 flush 防黑帧、强制视口裁剪、
+**两种页面契约都支持**，这是和以前最大的区别：
+
+1. **`window.renderAt(t)`** — 画面完全由秒数 t 决定（最可控，推荐）。
+2. **普通 HTML** — 完全不改代码也能渲：CSS `@keyframes`、WAAPI、GSAP 时间轴（`window.__timelines`）、
+   声明式 clip（`data-composition-id` + `data-start`/`data-duration`/`data-track-index`）都会被
+   **逐帧 seek 到 t**。渲染器检测到没有 `renderAt` 但有上述任一结构时，自动装一个通用 shim。
+
+页面内可以写 `<audio data-start="0" data-duration="6" data-volume="0.5" src="music.wav">`，
+渲染后自动 `adelay`+`amix` 混进 MP4，不用再绕 `media_build_video`。
+
+渲染器用本机 headless Edge + CDP 逐帧截图（1×1 flush 防黑帧、强制视口裁剪、
 冻结时钟、逐帧重置随机种子），ffmpeg 编码，**不需要安装 Playwright**。实测 720×1280@24fps 6 秒
 约 155 秒（约 1 秒/帧），建议先渲短片段预览。
 
@@ -323,9 +368,22 @@ token 对齐的拼图**，并给出每帧时间、变化分与原因。Windows �
 | `ref_time` / `built_time` | number | 各取 50% | 取帧时间点 |
 | `layout` | string | stack | `stack`（上参考下成片）/ `side`（左右） |
 | `include_metrics` | boolean | true | 是否跑逐项数值对比 |
+| `include_continuity` | boolean | true | 是否判定镜头承接（像不像 PPT） |
+| `rubric` | boolean | false | 是否附 7 维评分卡空白表供自评 |
 
 会分析两边、给出 11 项差异（时长/镜头数/平均镜头长/切点率/亮度/彩度/BPM/调性/硬切占比/卡点率/调色）
 与总体判定（一致/接近/部分一致/偏差大），并把对比图交给视觉模型判断。**这是仿制闭环的验收步骤**。
+
+另有两块**不占那 11 行**的独立信号：
+
+- **镜头承接（carry score）**：回答「每个切点有没有把东西带过去」。在切点前后取帧、把画面切成 12×9 区块
+  做位移搜索，判为**携带**（有东西活下来且移动 ≥2% 对角线或缩放 ≥10%）/ **锚定**（唯一活下来的东西很大且没动）/
+  **裸切**（什么都没活下来＝换张图贴上来）。得分 <0.5 判「像 PPT」，<0.7 提醒。这个信号能抓住数值全对、
+  但读起来像幻灯片的情况——而那正是 LLM 仿制最常见的失败。已知盲区会一并列出（连续世界边界天然少、
+  320px 上暗底细节会误读、±8px 搜索上限≈2.2% 对角线）。
+- **评分卡**（`rubric: true`）：7 维（风格还原度/内容与叙事/运动质量/排版与版式/完成度与质感/声音与卡点/技术正确性），
+  每维 1–10 分并给锚点。评分**强制要求证据**：每条必须带时间码或帧号、且改法里必须有数字，否则整份评分被拒——
+  「整体不错」这种无证据评价进不来。
 
 ## 4. 配置
 
@@ -584,19 +642,24 @@ node test/shell-smoke.mjs        # 外壳：二进制探测、ffprobe、单帧�
 node test/audio-engine.test.mjs  # 音频引擎（120BPM / C大调 合成夹具，23 DSP + 32 集成）       55 项
 node test/video-engine.test.mjs  # 视频引擎（3 场景 合成夹具 + 退化用例）                      23 项
 node test/craft-engine.test.mjs  # 制作技法：运镜/转场/调色/卡点分位/配方                      19 项
-node test/build-engine.test.mjs  # 合成引擎：分镜→成片、TTS、转场、字幕、响度、退化用例       29 项
+node test/build-engine.test.mjs  # 合成引擎：分镜→成片、叠加轨、变速定格、闪避、TTS、响度      35 项
 node test/corpus.test.mjs        # 批量语料：展开/缓存/画像/骨架                              18 项
 node test/change.test.mjs        # 变化量打分与选帧：切点/积分/兜底（吸收 dsh-see-now）       19 项
 node test/screen.test.mjs        # 屏幕采集 + token 对齐拼图（含真实截屏）                   23 项
 node test/htmlrender.test.mjs    # 代码动画渲染：CDP、确定性、源码扫描、黑帧检测、降级          17 项
+node test/anim-runtime.test.mjs  # 运行时平权：CSS/WAAPI seek、声明式时间轴、运动模糊、页内音频  20 项
 node test/gate.test.mjs          # 验收门禁：节奏/静帧/爆发/空档/音频五条腿的阈值与回退         15 项
 node test/styles-guidance.test.mjs # 风格提示词分节：不可改/可替换/禁用项（含真实库）         13 项
+node test/vocabulary.test.mjs    # 词汇库：12 曲线 + 弹簧、18 运镜、9 转场、8 外观、15 反模式    30 项
+node test/shots-lint.test.mjs    # 镜头卡库、版式体检、评分卡（含无证据拒绝）                 39 项
+node test/continuity.test.mjs    # 镜头承接判定 + 区域停留（合成夹具现场生成）                22 项
+node test/moves-tool.test.mjs    # media_moves 的 9 个 action 与 JSON 安全性                  15 项
 node test/e2e.mjs                # v1 端到端：真实调用感知工具                                9 项
 node test/vision.test.mjs        # 视觉适配：能力探测、图片预算、裁剪、多帧/对比报告         19 项
 node test/montage.test.mjs       # 时间条/对比图拼装与参考 vs 成片差异度量                    19 项
 node test/vision-render.test.mjs # blind/vision 双模式报告（含 blind 逐字节回归）              31 项
 node test/e2e-v2.mjs             # 全链路：学→取风格→造画面→合成→回测→看屏幕                16 项
-                                   —— 合计 334 项断言，全部通过
+                                   —— 合计 466 项断言，全部通过
 ```
 
 夹具是**合成**的，因此有 ground truth 可比：音频夹具是 120 BPM、C 大调、4/4、24 秒的鼓+贝斯+旋律

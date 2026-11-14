@@ -33,8 +33,8 @@ import { analyzeCorpus, expandSource, mediaId } from './lib/corpus.js'
 import { ingestUrls } from './lib/ingest.js'
 import { buildStyleProfile } from './lib/profile.js'
 import { artifactDir, formatBytes, formatTimecode, makeWorkDir, probe, removeWorkDir, resolveTools, run, summariseProbe } from './lib/ffmpeg.js'
-import { renderAudioReport, renderFrameReport, renderProbeReport, renderVideoReport } from './lib/render.js'
-import { renderAnimateReport, renderBuildReport, renderChangeSection, renderCorpusReport, renderCraftSection, renderSeeReport, renderStylesReport, renderTtsReport } from './lib/render-v2.js'
+import { renderAudioReport, renderFrameReport, renderProbeReport, renderVideoReport, tidy } from './lib/render.js'
+import { renderAnimateReport, renderBuildReport, renderChangeSection, renderCorpusReport, renderCraftSection, renderSeeReport, renderStylesReport, renderTtsReport, renderVocabularyReport } from './lib/render-v2.js'
 import { getStyle, resolveSkillDir, searchStyles, seriesOverview, starterPath } from './lib/styles.js'
 import { attachImages, detectVision, profileWidth, sampleTimes, VISION_PROFILES } from './lib/vision.js'
 import { renderCompareReport, renderFramesReport } from './lib/render-vision.js'
@@ -896,6 +896,7 @@ export function apply(ctx, rawConfig) {
         output: { type: 'string', description: '覆盖计划里的输出路径（建议绝对路径）。' },
         verify: { type: 'boolean', description: '渲染后自动用 media_watch_video 的同一套分析复核成片，默认 true。' },
         gate: { type: 'boolean', description: '渲染后跑验收门禁（节奏/静帧/爆发/空档/音频动态五项判定），默认 true，随 verify 一起跑。' },
+        lint: { type: 'boolean', description: '渲染前做版式体检（文字出框/标题与字幕打架/字号过小），默认 true。' },
         targets: { type: 'object', description: '可选的对照目标（如 style-profile.json 里的 reproduction.targets），用于报告里对比差距。' },
       },
     },
@@ -924,12 +925,30 @@ export function apply(ctx, rawConfig) {
       }
       if (Array.isArray(plan.scenes) && plan.scenes.length === 0) throw new Error('RenderPlan.scenes 为空，至少需要一个场景')
 
+      // Pre-render layout audit: text overflow, caption/title collisions, type
+      // below the legibility floor. Catching these before a render is the whole
+      // point — a 1080p render with clipped text is minutes wasted.
+      let lint = null
+      if (args.lint !== false) {
+        try {
+          const { lintPlan, summariseLint } = await import('./lib/lint.js')
+          const violations = lintPlan(plan)
+          lint = { violations, summary: summariseLint(violations) }
+        } catch (error) {
+          plan.warnings = plan.warnings ?? []
+        }
+      }
+
       const { buildVideo } = await import('./lib/build.js')
       const workDir = await makeWorkDir('media-senses-build')
       const startedAt = Date.now()
       try {
         const result = await buildVideo({ tools: resolved, plan, workDir, signal: exec?.signal })
         const notes = []
+        if (lint !== null && lint.violations.length > 0) {
+          const errors = lint.violations.filter((violation) => violation.severity === 'error')
+          if (errors.length > 0) notes.push(`版式体检发现 ${errors.length} 处会明显出错的问题（见报告「版式体检」一节）`)
+        }
         let verify = null
         let verifyError
         if (args.verify !== false) {
@@ -1016,7 +1035,7 @@ export function apply(ctx, rawConfig) {
             notes.push(`成片预览条生成失败（${error instanceof Error ? error.message : String(error)}）`)
           }
         }
-        const report = renderBuildReport(result, { plan, verify, verifyError, targets: args.targets, target, imagePlan })
+        const report = renderBuildReport(result, { plan, verify, verifyError, targets: args.targets, target, imagePlan, lint })
         const attached = await attachFor(exec, imageEntries, vision)
         const images = attached.images
         return {
@@ -1032,6 +1051,7 @@ export function apply(ctx, rawConfig) {
           verify,
           gate: verify?.gate ?? null,
           gate_verdict: verify?.gate?.verdict ?? null,
+          lint: lint === null ? null : { ok: lint.summary.ok, errors: lint.summary.errors, warnings: lint.summary.warnings, violations: lint.violations },
           images,
           vision: { active: vision.active, target, profile: vision.profile, reason: vision.reason },
           elapsed_seconds: Math.round((Date.now() - startedAt) / 100) / 10,
@@ -1172,29 +1192,195 @@ export function apply(ctx, rawConfig) {
     },
   })
 
+  /* ---------------------------------------------------------------- media_moves */
+
+  ctx.tools.register({
+    name: 'media_moves',
+    description:
+      '导演词典：把「缓推一下」「用硬切」「活泼一点」「高级感」这类说法换成确定数值。包含 18 个运镜（带 ffmpeg motion 映射）、' +
+      '9 个转场（带 xfade 映射与声音处理）、12 条缓动曲线与弹簧阻尼语义、8 套外观参数预设、15 条「一眼 AI 味」自查、7 条剪辑缝规则，' +
+      '另有 44 张镜头配方卡（每张带参数表、「往哪调会怎样」、常见坑与可运行配方）和时长预算（这个时长最多画多少笔）。' +
+      '写分镜前先查这里，不要凭感觉编。\n' +
+      'The director\'s vocabulary: 18 camera moves with ffmpeg mappings, 9 transitions with xfade mappings and sound handling, ' +
+      '12 easing curves plus spring damping semantics, 8 look parameter presets, 15 "looks AI-generated" antipatterns, 7 cut-seam rules, ' +
+      '44 shot recipe cards (with a params table, "what happens if you turn this knob", pitfalls and runnable recipes) and a duration budget. ' +
+      'Look here before authoring a storyboard instead of guessing.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['moves', 'transitions', 'easing', 'looks', 'antipatterns', 'rules', 'cards', 'budget', 'show'],
+          description: 'moves 运镜 / transitions 转场 / easing 缓动与弹簧 / looks 外观预设 / antipatterns 反 AI 味 / rules 剪辑缝 / cards 镜头配方卡 / budget 时长预算 / show 取单项详情。默认 moves。',
+        },
+        query: { type: 'string', description: 'cards 时的检索词（如「标题」「数据」「转场」「stagger」）；show 时也可用 id。' },
+        id: { type: 'string', description: 'show 时的 id（运镜/转场/外观/镜头卡 id，如 push-in / dissolve / anime-cel / camera.push-in）。' },
+        category: { type: 'string', description: 'cards 时的类目筛选：opening-brand / camera / transitions / typography / ui-entrance / interaction / data / light-emphasis / rhythm / outro。' },
+        energy: { type: 'string', enum: ['low', 'medium', 'high'], description: 'cards 时的能量筛选。' },
+        seconds: { type: 'number', description: 'budget 时的目标时长（秒）。' },
+        kind: { type: 'string', description: 'budget 时的体裁：opener / demo / kinetic / bumper / explainer。' },
+        limit: { type: 'integer', description: '返回条数上限（默认 8，最多 50）。' },
+      },
+    },
+    output: { schema: TEXT_OUTPUT_SCHEMA, render: renderTextAndImages },
+    isConcurrencySafe: () => true,
+    timeoutMs: 60_000,
+    async execute(args) {
+      const action = typeof args.action === 'string' ? args.action : 'moves'
+      const limit = Number.isInteger(args.limit) && args.limit > 0 ? Math.min(args.limit, 50) : 8
+      let payload
+      let report
+
+      if (action === 'moves') {
+        const { CAMERA_MOVES } = await import('./lib/moves.js')
+        payload = { action, moves: CAMERA_MOVES }
+        report = renderVocabularyReport(payload)
+      } else if (action === 'transitions') {
+        const { TRANSITIONS } = await import('./lib/moves.js')
+        payload = { action, transitions: TRANSITIONS }
+        report = renderVocabularyReport(payload)
+      } else if (action === 'easing') {
+        const { EASINGS, EASE_ROLES, EASE_ROLE_NOTES, SPRING_FEEL } = await import('./lib/easing.js')
+        // Functions cannot cross the tool boundary: keep the descriptive fields
+        // only, so the value stays JSON-safe.
+        const curves = {}
+        for (const [name, entry] of Object.entries(EASINGS)) {
+          curves[name] = {
+            css: entry.css,
+            nameZh: entry.nameZh,
+            feelZh: entry.feelZh,
+            monotonic: entry.monotonic,
+            cssExact: entry.cssExact,
+          }
+        }
+        payload = { action, easings: { curves, roles: EASE_ROLES, roleNotes: EASE_ROLE_NOTES, spring: SPRING_FEEL } }
+        report = renderVocabularyReport(payload)
+      } else if (action === 'looks') {
+        const { LOOKS } = await import('./lib/look.js')
+        payload = { action, looks: LOOKS }
+        report = renderVocabularyReport(payload)
+      } else if (action === 'antipatterns') {
+        const { LOOK_ANTIPATTERNS } = await import('./lib/look.js')
+        payload = { action, antipatterns: LOOK_ANTIPATTERNS }
+        report = renderVocabularyReport(payload)
+      } else if (action === 'rules') {
+        const { CUT_SEAM_RULES } = await import('./lib/moves.js')
+        payload = { action, rules: CUT_SEAM_RULES }
+        report = renderVocabularyReport(payload)
+      } else if (action === 'budget') {
+        const { durationBudget } = await import('./lib/shots.js')
+        const budget = durationBudget({
+          seconds: Number.isFinite(args.seconds) ? args.seconds : undefined,
+          kind: typeof args.kind === 'string' ? args.kind : undefined,
+        })
+        payload = { action, budget }
+        const lines = ['# 时长预算', '']
+        if (budget.seconds !== null && budget.seconds !== undefined) {
+          lines.push(`- 目标时长 ${budget.seconds}s：最多约 **${budget.maxStrokes}** 笔（起形+马克笔，${budget.strokesPerSecond} 笔/秒）`)
+          lines.push(`- 若按部位上色：约 **${budget.maxColorStrokes}** 笔（${budget.colorStrokesPerSecond} 笔/秒）`)
+        }
+        if (budget.genreRange !== null && budget.genreRange !== undefined) {
+          lines.push(`- ${budget.kind} 体裁的常见区间：${budget.genreRange.min}–${budget.genreRange.max}s${budget.withinGenreRange === false ? '（当前时长不在区间内）' : ''}`)
+        }
+        if (budget.recommendedSeconds !== null && budget.recommendedSeconds !== undefined) {
+          lines.push(`- 建议时长：${budget.recommendedSeconds}s`)
+        }
+        if (typeof budget.adviceZh === 'string' && budget.adviceZh.length > 0) lines.push('', budget.adviceZh)
+        for (const warning of budget.warnings ?? []) lines.push(`- ${warning}`)
+        report = tidy(lines.join('\n'))
+      } else if (action === 'cards') {
+        const { findShots, renderShotCard } = await import('./lib/shots.js')
+        const cards = findShots(typeof args.query === 'string' ? args.query : '', {
+          category: typeof args.category === 'string' ? args.category : undefined,
+          energy: typeof args.energy === 'string' ? args.energy : undefined,
+          limit,
+        })
+        payload = { action, entries: cards.map((card) => ({ id: card.id, nameZh: card.nameZh, category: card.category, energy: card.energy, oneLineZh: card.oneLineZh })) }
+        const lines = [`# 镜头配方卡${typeof args.query === 'string' && args.query.length > 0 ? ` · ${args.query}` : ''}`, '']
+        if (cards.length === 0) {
+          lines.push('没有匹配的配方卡；换一个词（「标题」「入场」「数据」「转场」「收尾」）或去掉类目筛选。')
+        }
+        for (const card of cards) {
+          lines.push(renderShotCard(card))
+          lines.push('')
+        }
+        report = tidy(lines.join('\n'))
+      } else {
+        // show: try a camera move, a transition, a look, then a shot card.
+        const wanted = String(typeof args.id === 'string' ? args.id : args.query ?? '').trim()
+        if (wanted.length === 0) throw new Error('show 需要 id（如 push-in / dissolve / anime-cel / camera.push-in）')
+        const { getMove, getTransition } = await import('./lib/moves.js')
+        const { getLook } = await import('./lib/look.js')
+        const { getShot } = await import('./lib/shots.js')
+        const move = getMove(wanted)
+        const transition = move === null ? getTransition(wanted) : null
+        const look = move === null && transition === null ? getLook(wanted) : null
+        const shot = move === null && transition === null && look === null ? getShot(wanted) : null
+        if (move === null && transition === null && look === null && shot === null) {
+          throw new Error(`词典里没有「${wanted}」；先用 action:"moves" / "looks" / "cards" 找 id。`)
+        }
+        payload = { action: 'show', move, transition, look, shot }
+        const { renderShotCard } = await import('./lib/shots.js')
+        if (shot !== null) {
+          report = tidy(`# 镜头配方卡\n\n${renderShotCard(shot)}`)
+        } else {
+          report = renderVocabularyReport({ action: 'show', move: move ?? undefined, transition: transition ?? undefined, look: look ?? undefined })
+        }
+      }
+
+      return {
+        kind: 'moves',
+        action,
+        count: Array.isArray(payload.moves)
+          ? payload.moves.length
+          : Array.isArray(payload.transitions)
+            ? payload.transitions.length
+            : Array.isArray(payload.looks)
+              ? payload.looks.length
+              : Array.isArray(payload.antipatterns)
+                ? payload.antipatterns.length
+                : Array.isArray(payload.entries)
+                  ? payload.entries.length
+                  : payload.budget === undefined ? 1 : 0,
+        data: payload,
+        report,
+      }
+    },
+    presentCall(args) {
+      return { card: 'generic', title: `Director vocabulary ${args.action ?? 'moves'}`, kind: 'read' }
+    },
+  })
+
   /* -------------------------------------------------------------- media_animate */
 
   ctx.tools.register({
     name: 'media_animate',
     description:
-      '把一段代码动画（HTML + Canvas/SVG/CSS/Three.js）逐帧渲染成 MP4 片段。页面必须实现 `window.renderAt(t)`：' +
-      '画面完全由秒数 t 决定，`?export=1` 时停止自己的 rAF/CSS 自播放，随机数用固定种子。' +
+      '把一段代码动画（HTML + Canvas/SVG/CSS/Three.js/WebGL）逐帧渲染成 MP4 片段。' +
+      '两种页面契约都支持：① 实现 `window.renderAt(t)`（画面完全由秒数 t 决定）；② 普通 HTML——CSS @keyframes / WAAPI / GSAP 时间轴（`window.__timelines`）/ ' +
+      '声明式 clip（`data-composition-id` + `data-start`/`data-duration`）会被自动 seek 到每帧。可选打开运动模糊（按快门角多次采样后混合）与页面内 `<audio>` 混音。' +
       '用本机 headless Edge + CDP 逐帧截图后用 ffmpeg 编码，无需安装 Playwright。渲染出的片段可以交给 media_build_video 作为 video 场景拼接。\n' +
-      'Render an HTML/Canvas/CSS/Three.js animation into an MP4 segment frame-by-frame. The page must implement ' +
-      '`window.renderAt(t)` (deterministic from t, no self-driven rAF when loaded with ?export=1, seeded randomness). ' +
+      'Render an HTML/Canvas/CSS/Three.js/WebGL animation into an MP4 segment frame-by-frame. Two contracts are supported: ' +
+      '(1) the page implements `window.renderAt(t)`; (2) plain HTML — CSS @keyframes / WAAPI / GSAP timelines (`window.__timelines`) / ' +
+      'declarative clips (`data-composition-id` + `data-start`/`data-duration`) are seeks to each frame automatically. ' +
+      'Optional shutter-angle motion blur (multiple sub-samples blended) and in-page `<audio>` mixing. ' +
       'Drives headless Edge over CDP and encodes with ffmpeg — no Playwright install needed. The segment can be spliced ' +
       'into media_build_video as a video scene.',
     parameters: {
       type: 'object',
       additionalProperties: false,
       properties: {
-        html_path: { type: 'string', description: '实现 renderAt 的 HTML 文件路径（绝对路径）。' },
+        html_path: { type: 'string', description: '动画 HTML 文件路径（绝对路径）。' },
         html: { type: 'string', description: '也可以直接给 HTML 源码（会写到临时文件后渲染）。' },
         output: { type: 'string', description: '输出 MP4 路径；省略时写到 ~/.dsh/media-senses/output。' },
         width: { type: 'integer', description: '宽（偶数），默认 1920。' },
         height: { type: 'integer', description: '高（偶数），默认 1080。' },
         fps: { type: 'integer', description: '帧率，默认 30。' },
         duration: { type: 'number', description: '时长（秒），默认 12，上限由配置 animateMaxSeconds 决定。' },
+        motion_blur: { type: 'integer', description: '运动模糊子帧数（1=关闭，2–16）。快速运镜/甩镜要开，静止画面不用；成本约为 samples 倍抓帧。' },
+        shutter_angle: { type: 'number', description: '快门角（0–360，默认 180）。180°＝电影常规，360°＝更强拖影。' },
+        mix_audio: { type: 'boolean', description: '是否把页面内 `<audio data-start data-duration data-volume src>` 混进输出，默认 true。' },
         style_id: { type: 'string', description: '可选：所用的风格编号，写进报告便于追溯。' },
       },
     },
@@ -1227,6 +1413,8 @@ export function apply(ctx, rawConfig) {
           Number.isFinite(args.duration) ? Math.max(0.5, args.duration) : 12,
           config.animateMaxSeconds,
         )
+        const samples = Number.isInteger(args.motion_blur) ? Math.min(Math.max(args.motion_blur, 1), 16) : 1
+        const shutter = Number.isFinite(args.shutter_angle) ? Math.min(Math.max(args.shutter_angle, 0), 360) : 180
         const result = await renderAnimation({
           tools: resolved,
           htmlPath,
@@ -1237,6 +1425,8 @@ export function apply(ctx, rawConfig) {
           duration,
           workDir,
           browserPath: config.browserPath,
+          motionBlur: samples > 1 ? { samples, shutter: shutter > 0 ? shutter : 180 } : undefined,
+          mixAudio: args.mix_audio !== false,
           signal: exec?.signal,
         })
         // A preview strip (head / middle / tail) makes the generation loop visual:
@@ -1278,6 +1468,10 @@ export function apply(ctx, rawConfig) {
           frames: result.frames,
           bytes: result.bytes,
           render_seconds: result.renderSeconds,
+          runtime: result.runtime ?? null,
+          motion_blur: result.motionBlur ?? null,
+          audio: result.audio ?? null,
+          warnings: result.warnings ?? [],
           images,
           vision: { active: vision.active, target, profile: vision.profile, reason: vision.reason },
           report,
@@ -1574,6 +1768,8 @@ export function apply(ctx, rawConfig) {
         built_time: { type: 'number', description: '成片取帧时间点（默认取 50% 处）。' },
         layout: { type: 'string', enum: ['stack', 'side'], description: 'stack=上参考下成片（默认）；side=左参考右成片。' },
         include_metrics: { type: 'boolean', description: '是否跑完整数值对比（需要分析两边，稍慢；默认 true）。' },
+        include_continuity: { type: 'boolean', description: '是否判定镜头承接（切点有没有把东西带过去、像不像 PPT；默认 true，比数值对比更快）。' },
+        rubric: { type: 'boolean', description: '是否附上 7 维评分卡空白表，让模型自评并给出带时间码证据的改法（默认 false）。' },
         mode: { type: 'string', enum: ['auto', 'blind', 'vision'], description: '呈现模式：auto 按当前模型能力自动选择（默认）。' },
       },
       required: ['reference', 'produced'],
@@ -1615,6 +1811,32 @@ export function apply(ctx, rawConfig) {
               signal: exec?.signal,
               analyzeAudio,
             })
+            // Continuity: is anything carried across each cut, or is every shot a
+            // new picture? The numeric table cannot see this failure at all.
+            if (args.include_continuity !== false) {
+              try {
+                const { analyzeContinuity } = await import('./lib/continuity.js')
+                refAnalysis.continuity = await analyzeContinuity({
+                  tools: resolved,
+                  file: reference.path,
+                  workDir,
+                  shots: refAnalysis.shots,
+                  duration: refAnalysis.duration,
+                  signal: exec?.signal,
+                })
+                builtAnalysis.continuity = await analyzeContinuity({
+                  tools: resolved,
+                  file: produced.path,
+                  workDir,
+                  shots: builtAnalysis.shots,
+                  duration: builtAnalysis.duration,
+                  signal: exec?.signal,
+                })
+              } catch (error) {
+                if (error?.name === 'AbortError') throw error
+                // Continuity is an extra signal, never a reason to fail a compare.
+              }
+            }
             diff = diffMetrics(refAnalysis, builtAnalysis)
             analysed = { refDuration: refAnalysis.duration, builtDuration: builtAnalysis.duration }
           } catch (error) {
@@ -1638,13 +1860,27 @@ export function apply(ctx, rawConfig) {
           mode: args.layout === 'side' ? 'side' : 'stack',
         })
         const attached = await attachFor(exec, [{ path: compare.path, name: 'media-senses-compare.png', kind: 'compare' }], vision)
-        const report = renderCompareReport({
+        const compareReport = renderCompareReport({
           reference: reference.path,
           produced: produced.path,
           diff,
           compareImage: { path: compare.path, width: compare.width, height: compare.height, mode: compare.mode, tokenEstimate: compare.tokenEstimate },
           target,
         })
+        // A self-assessment card turns "looks close" into seven scored dimensions
+        // that each need a timecode and a numeric fix, which is what makes the
+        // next revision actionable.
+        let report = compareReport
+        let rubric = null
+        if (args.rubric === true) {
+          try {
+            const { renderRubricTemplate } = await import('./lib/rubric.js')
+            report = `${compareReport}\n\n${renderRubricTemplate()}`
+            rubric = { attached: true }
+          } catch (error) {
+            rubric = { attached: false, error: error instanceof Error ? error.message : String(error) }
+          }
+        }
         return {
           kind: 'compare',
           reference: reference.path,
@@ -1652,6 +1888,8 @@ export function apply(ctx, rawConfig) {
           verdict: diff.verdict ?? 'unknown',
           summary: diff.summary ?? {},
           rows: diff.rows ?? [],
+          continuity: diff.continuity ?? null,
+          rubric,
           compare_image: compare.path ?? null,
           images: attached.images,
           vision: { active: vision.active, target, profile: vision.profile, reason: vision.reason },

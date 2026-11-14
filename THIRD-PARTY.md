@@ -46,14 +46,19 @@
 
 | 来源 | 许可 | 吸收了什么 | 落在哪 |
 |---|---|---|---|
-| [onetake](https://github.com/feitangyuan/onetake) | PolyForm Noncommercial 1.0.0（**仅学思路，未取代码**） | 「像 PPT」的量化判据：镜头长变异系数 ≥0.25、静帧占比 ≥25%、1.5 s 内 ≥3 次大变化算一处爆发；静音轨不能判成 PASS | `lib/gate.js` 的阈值与五条腿 |
-| [claude-animated-shorts](https://github.com/mromidev/claude-animated-shorts) | MIT（参考帧明确不可再分发，**未取图像**） | 黑场 <0.04 / 白场 >0.93 / 冻帧 / 无计划跳变的成片自检阈值 | `lib/gate.js`（dead-air 与静帧判定） |
-| [HyperFrames](https://github.com/heygen-com/hyperframes) | Apache-2.0 | `check`/`review` 闭环：把可测量的工艺问题（读不完的字、>3 s 无变化、首帧空白、无声片）做成渲染前的判定而非事后看片 | `lib/gate.js`（dead-air 3 s）、`lib/htmlrender.js`（渲染前源码扫描） |
-| [mg-styles-15](https://github.com/Vincentwei1021/mg-styles-15) | MIT | 提示词四段式与「签名特征必须可检验」；`document.getAnimations()` 可 seek 的思路 | `lib/styles.js` 的分节解析 |
-| [lemo-opuscar](https://github.com/lemomo-ai/lemo-opuscar) | 代码 MIT / 文档 CC BY-NC（**只借结构，未取文本**） | 「不可改 / 改变风格性格 / 可自由改」的三分法；11 节 STYLE.md 的节名 | `lib/styles.js` 的 invariants / variables |
-| [huashu-art-motion](https://github.com/alchaincyf/huashu-art-motion) | MIT（角色素材不随 MIT，**未取**） | 反 PPT 门禁与「镜头事件不是 bug」的重分类思路 | `lib/gate.js` |
-| [video-shotcraft](https://github.com/Vincentwei1021/video-shotcraft) | Apache-2.0（依赖的 Remotion 另有许可，**未打包**） | 卡点验收用分位数而非均值、3 帧容差；镜头时长必须有变化 | `lib/craft.js` 的 `medianAbsOffsetMs` / `p80AbsOffsetMs` / `withinThreeFramesRatio` |
-| [supervision](https://github.com/roboflow/supervision) | MIT | 「区域占用时长」作为一等指标的概念 | `lib/gate.js` 的静帧段落统计 |
+| [HyperFrames](https://github.com/heygen-com/hyperframes) | Apache-2.0 | 声明式 clip 契约（`data-composition-id`/`data-start`/`data-duration`/`data-track-index`）、`window.__timelines` 适配器思路、合成内 `<audio>` 多轨混音、渲染前 lint 的违规分类、运动模糊（快门角 + 子帧混合）、`check`/`review` 闭环（读不完的字、>3 s 无变化、首帧空白） | `lib/htmlrender.js`、`lib/animaudio.js`、`lib/gate.js` |
+| [mg-styles-15](https://github.com/Vincentwei1021/mg-styles-15) | MIT | `document.getAnimations()` 逐帧 seek（让普通 CSS/WAAPI 动画可确定性渲染）、`tmix` 运动模糊分组、槽位锁与 per-worker 浏览器 | `lib/htmlrender.js` 的运行时注入与编码链 |
+| [onetake](https://github.com/feitangyuan/onetake) | PolyForm Noncommercial 1.0.0（**仅学思路，未取代码**） | 边界承接判据：携带/锚定/裸切的定义与 0.5/0.7 门槛、burstable 豁免、已知盲区清单 | `lib/continuity.js` |
+| [supervision](https://github.com/roboflow/supervision) | MIT | 「区域占用时长」作为一等指标 | `lib/continuity.js` 的 `zoneDwell` |
+| [video-shotcraft](https://github.com/Vincentwei1021/video-shotcraft) | Apache-2.0（依赖的 Remotion 另有许可，**未打包**） | 镜头配方卡的六段式 schema 与「参数 | 典型值 | 调节手感」三列表、时长预算思路、卡点分位验收 | `lib/shots.js`、`lib/craft.js` |
+| [cinecode](https://github.com/sarpstar/cinecode) | MIT | 速度词量化（缩放 %/s、扫掠 s/屏）、缓动词的 5 档语义、转场默认时长表、cut seam 硬规则、镜头动作词典 | `lib/moves.js` |
+| [huashu-art-motion](https://github.com/alchaincyf/huashu-art-motion) | MIT（角色素材不随 MIT，**未取**） | 反 PPT 门禁与「镜头事件不是 bug」的重分类思路、时长/笔数预算的量级 | `lib/gate.js`、`lib/shots.js` |
+| [claude-animated-shorts](https://github.com/mromidev/claude-animated-shorts) | MIT（参考帧明确不可再分发，**未取图像**） | 黑场/白场/冻帧/跳变的成片自检阈值 | `lib/gate.js` |
+| [lemo-opuscar](https://github.com/lemomo-ai/lemo-opuscar) | 代码 MIT / 文档 CC BY-NC（**只借结构，未取文本**） | 「不可改 / 改变风格性格 / 可自由改」三分法、11 节 STYLE.md 的节名与顺序、8 套外观的参数分组（palette/materials/light/post/render） | `lib/styles.js`、`lib/look.js` |
+| [sweety-handdraw-video](https://github.com/threerocks/sweety-handdraw-video) | MIT | 笔数预算（起形+马克笔 ≈3.9 笔/秒、按部位上色 ≈6 笔/秒）与体裁时长区间 | `lib/shots.js` 的 `durationBudget` |
+| [bang-motion](https://github.com/bangtutorial/bang-motion) | MIT | 反 PPT 的六条可编程检查（无整段淡入/必须有持续主体/文字层级/转场多样性/背景有运动/字号下限） | `lib/gate.js`、`lib/lint.js` |
+| [anidoodle](https://github.com/alexgreensh/anidoodle) | Apache-2.0 | 三层验收工具链（determinism / contract / dead air）的分层方式 | `lib/gate.js`、`lib/lint.js` |
+| [cth9191/animate](https://github.com/cth9191/animate) | MIT | 交付期五项实测验收（卡点、故事弧响度、主体锚定、最响点、语速） | `lib/gate.js` |
 | [awesome-opus5-5-videos](https://github.com/yihui-dev/awesome-opus5-5-videos) | MIT | 只作分类参考，未取条目内容 | — |
 
 ### 3.2 只读方法论、明确不吸收的
@@ -63,7 +68,7 @@
 | [OpenMontage](https://github.com/calesthio/OpenMontage) | AGPL-3.0（有传染性） | 只参考了它的「slideshow risk」维度划分，未取任何代码 |
 | [opus-video-prompts](https://github.com/joeseesun/opus-video-prompts) | 无许可、README 声明版权归原作者 | 提示词原文一个字都未入库 |
 | [remotion-dev/skills](https://github.com/remotion-dev/skills) | 未声明 | 只参考了「一句 Use when + 一条示例调用」的描述形态 |
-| [cinecode](https://github.com/sarpstar/cinecode) / [anidoodle](https://github.com/alexgreensh/anidoodle) / [sweety-handdraw-video](https://github.com/threerocks/sweety-handdraw-video) / [bang-motion](https://github.com/bangtutorial/bang-motion) / [cth9191/animate](https://github.com/cth9191/animate) / [ClaudeAnimationBase](https://github.com/JohnHeibel/ClaudeAnimationBase) | MIT | 读过后判断其增量（镜头动作词典、笔刷参数、情绪表）与本项目现有能力重叠，本轮不取 |
+| [ClaudeAnimationBase](https://github.com/JohnHeibel/ClaudeAnimationBase) | MIT | 情绪表未在 README 中展开，且本轮不需要角色表演系统 |
 
 ## 4. 其他算法与工程结论
 
