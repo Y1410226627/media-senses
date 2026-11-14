@@ -59,6 +59,8 @@
 | [bang-motion](https://github.com/bangtutorial/bang-motion) | MIT | 反 PPT 的六条可编程检查（无整段淡入/必须有持续主体/文字层级/转场多样性/背景有运动/字号下限） | `lib/gate.js`、`lib/lint.js` |
 | [anidoodle](https://github.com/alexgreensh/anidoodle) | Apache-2.0 | 三层验收工具链（determinism / contract / dead air）的分层方式 | `lib/gate.js`、`lib/lint.js` |
 | [cth9191/animate](https://github.com/cth9191/animate) | MIT | 交付期五项实测验收（卡点、故事弧响度、主体锚定、最响点、语速） | `lib/gate.js` |
+| [ClaudeAnimationBase](https://github.com/JohnHeibel/ClaudeAnimationBase) | MIT | 情绪用「命名姿态 + 面部状态」参数化、且须在每个视角可读的建模方式；p5.brush 与逐帧 boiling linework 的技法定位 | `lib/performance.js`（情绪预设与表演节拍） |
+| [anidoodle](https://github.com/alexgreensh/anidoodle) | Apache-2.0 | 「按部位描线 + 逐帧抖动（line boil）」作为手绘感来源，而非贴纸纹 | `assets/templates/hand-drawn-line.html` |
 | [awesome-opus5-5-videos](https://github.com/yihui-dev/awesome-opus5-5-videos) | MIT | 只作分类参考，未取条目内容 | — |
 
 ### 3.2 只读方法论、明确不吸收的

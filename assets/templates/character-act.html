@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Character — acting beat</title>
+<style>
+  html, body { margin: 0; height: 100%; background: var(--ms-bg, #101319); overflow: hidden; }
+  canvas { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+</style>
+</head>
+<body>
+<canvas id="c" width="1920" height="1080"></canvas>
+<script>
+/*
+ * Character acting: a simple drawn figure that blinks, breathes and performs an
+ * anticipation → strike → recover beat on cue.
+ *
+ * The timing lives in `window.MS` (performance prelude): blink cadence, bob
+ * range, lean angles and the one-frame strike all come from measured rules, so
+ * the character moves like an animated figure rather than a puppet.
+ *
+ * Deterministic contract: every frame is a pure function of t.
+ */
+const DEFAULTS = {
+  emotion: 'curious',
+  emotionAt: 1.1,        // seconds: when the beat starts
+  beatAt: 1.6,           // seconds: strike happens here
+  bobShare: 0.05,
+  headRatio: 3.5,
+  ink: '#241c18',
+  paper: '#f4ead8',
+  accent: '#c8452a',
+  bg: '#101319',
+  blinkInterval: 1.4,
+}
+
+const cfg = Object.assign({}, DEFAULTS, window.__MS_TEMPLATE || {})
+document.documentElement.style.setProperty('--ms-bg', cfg.bg)
+
+const canvas = document.getElementById('c')
+const ctx = canvas.getContext('2d')
+const FPS = Number(window.__MS_FPS) > 0 ? Number(window.__MS_FPS) : 24
+
+function fitCanvas() {
+  const scale = Math.min(window.innerWidth / 1920, window.innerHeight / 1080)
+  canvas.style.transform = 'scale(' + scale.toFixed(5) + ')'
+}
+fitCanvas()
+window.addEventListener('resize', fitCanvas)
+
+// Character geometry, in canvas pixels, derived from the heads-tall proportion.
+const totalHeight = 620
+const headHeight = totalHeight / cfg.headRatio
+const headWidth = headHeight * 0.94
+const centreX = 960
+const groundY = 860
+
+function drawPose(pose) {
+  ctx.clearRect(0, 0, 1920, 1080)
+  // Paper ground.
+  ctx.fillStyle = cfg.paper
+  ctx.fillRect(0, groundY, 1920, 1080 - groundY)
+  ctx.fillStyle = 'rgba(36,28,24,0.08)'
+  ctx.fillRect(0, groundY, 1920, 6)
+
+  const bob = pose.bobPx
+  const lean = (pose.leanDeg * Math.PI) / 180
+  ctx.save()
+  ctx.translate(centreX, groundY)
+  ctx.rotate(lean)
+  ctx.translate(0, bob)
+
+  // Body: a simple tapered torso.
+  const bodyTop = -totalHeight + headHeight * 0.9
+  ctx.fillStyle = cfg.ink
+  ctx.beginPath()
+  ctx.moveTo(-headWidth * 0.42, -totalHeight + headHeight)
+  ctx.quadraticCurveTo(-headWidth * 0.52, bodyTop - 40, -headWidth * 0.30, bodyTop)
+  ctx.lineTo(headWidth * 0.30, bodyTop)
+  ctx.quadraticCurveTo(headWidth * 0.52, bodyTop - 40, headWidth * 0.42, -totalHeight + headHeight)
+  ctx.closePath()
+  ctx.fill()
+
+  // Head.
+  const headCentreY = -totalHeight + headHeight * 0.5
+  ctx.beginPath()
+  ctx.ellipse(0, headCentreY, headWidth * 0.5, headHeight * 0.5, 0, 0, Math.PI * 2)
+  ctx.fillStyle = cfg.paper
+  ctx.fill()
+  ctx.lineWidth = 7
+  ctx.strokeStyle = cfg.ink
+  ctx.stroke()
+
+  // Eyes: the lid closes by shrinking the eye, not by fading it.
+  const eyeY = headCentreY - headHeight * 0.06
+  const eyeDx = headWidth * 0.26
+  const eyeOpen = Math.max(0.06, pose.eyeOpen)
+  for (const side of [-1, 1]) {
+    ctx.beginPath()
+    ctx.ellipse(side * eyeDx, eyeY, headWidth * 0.055, headHeight * 0.09 * eyeOpen, 0, 0, Math.PI * 2)
+    ctx.fillStyle = cfg.ink
+    ctx.fill()
+  }
+
+  // Brows: raised is positive.
+  ctx.strokeStyle = cfg.ink
+  ctx.lineWidth = 6
+  for (const side of [-1, 1]) {
+    const browY = eyeY - headHeight * 0.20 - pose.brow * headHeight * 0.07
+    ctx.beginPath()
+    ctx.moveTo(side * eyeDx - headWidth * 0.10, browY + pose.brow * -3)
+    ctx.lineTo(side * eyeDx + headWidth * 0.10, browY - pose.brow * 3)
+    ctx.stroke()
+  }
+
+  // Mouth: a single arc, curvature driven by the emotion.
+  const mouthY = headCentreY + headHeight * 0.22
+  ctx.beginPath()
+  ctx.lineWidth = 7
+  ctx.strokeStyle = cfg.accent
+  const width = headWidth * 0.24
+  ctx.moveTo(-width, mouthY)
+  ctx.quadraticCurveTo(0, mouthY + pose.mouth * headHeight * 0.22, width, mouthY)
+  ctx.stroke()
+
+  ctx.restore()
+}
+
+window.renderAt = async function (t) {
+  // Emotion switches on cue; the acting beat starts a moment later.
+  const emotion = t >= cfg.emotionAt ? cfg.emotion : 'neutral'
+  const pose = MS.poseAt({ emotion, t, fps: FPS, blinkInterval: cfg.blinkInterval })
+  // Signed progress of the acting beat around the cue.
+  const beatFrame = (t - cfg.beatAt) * FPS
+  const beat = MS.actingBeat(Math.max(0, beatFrame))
+  // Breathing is a slow sine, not noise; it stops entirely during the strike.
+  const breath = 1 + Math.sin(t * 1.7) * 0.012 * (beat.phase === 'strike' ? 0 : 1)
+  pose.bobPx = (pose.bobPx || 0) + (1 - breath) * totalHeight * cfg.bobShare * 4
+  // The strike pulls the whole figure forward on its single frame.
+  pose.leanDeg += beat.pose * 9
+  pose.mouth += beat.pose * 0.35
+  pose.brow += beat.pose * 0.3
+  drawPose(pose)
+}
+</script>
+</body>
+</html>

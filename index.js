@@ -1417,6 +1417,7 @@ export function apply(ctx, rawConfig) {
         motion_blur: { type: 'integer', description: '运动模糊子帧数（1=关闭，2–16）。快速运镜/甩镜要开，静止画面不用；成本约为 samples 倍抓帧。' },
         shutter_angle: { type: 'number', description: '快门角（0–360，默认 180）。180°＝电影常规，360°＝更强拖影。' },
         mix_audio: { type: 'boolean', description: '是否把页面内 `<audio data-start data-duration data-volume src>` 混进输出，默认 true。' },
+        show_adapters: { type: 'boolean', description: '报告里是否附「各种动画引擎怎么跟着帧走」的对照表（Lottie/Three/Anime/自研），默认 true。' },
         style_id: { type: 'string', description: '可选：所用的风格编号，写进报告便于追溯。' },
       },
     },
@@ -1493,7 +1494,7 @@ export function apply(ctx, rawConfig) {
         }
         const attached = await attachFor(exec, imageEntries, vision)
         const images = attached.images
-        const report = renderAnimateReport(result, { styleId: args.style_id, htmlPath, previewPath, target, imagePlan })
+        const report = renderAnimateReport(result, { styleId: args.style_id, htmlPath, previewPath, target, imagePlan, showAdapters: args.show_adapters !== false })
         return {
           kind: 'animate',
           output: result.output,

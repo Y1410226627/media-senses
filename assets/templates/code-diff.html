@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Code diff reveal</title>
+<style>
+  html, body { margin: 0; height: 100%; background: var(--ms-bg, #0b0d12); overflow: hidden;
+               font-family: var(--ms-font, "Microsoft YaHei", sans-serif); }
+  #stage { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px;
+           padding: 96px 120px; box-sizing: border-box; transform-origin: 0 0; }
+  #title { color: var(--ms-ink, #e9edf5); font-size: 44px; font-weight: 700; margin-bottom: 44px; }
+  #code { font-family: "Cascadia Mono", Consolas, "Courier New", monospace; font-size: 34px; line-height: 1.55; }
+  .line { white-space: pre; padding: 0 18px; border-left: 5px solid transparent; color: var(--ms-ink, #cdd6e5); }
+  .line.add { border-left-color: var(--ms-add, #3fb950); background: rgba(63,185,80,0.10); }
+  .line.del { border-left-color: var(--ms-del, #f85149); background: rgba(248,81,73,0.10); color: #9aa4b2; text-decoration: line-through; }
+  .line.ctx { color: #8b95a6; }
+  .line.hidden { visibility: hidden; }
+  .caret { display: inline-block; width: 0.62em; height: 1.12em; vertical-align: text-bottom;
+           background: var(--ms-accent, #d29922); animation: none; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="title"></div>
+  <div id="code"></div>
+</div>
+<script>
+/*
+ * Code diff reveal: lines appear one at a time, additions and deletions carry a
+ * coloured gutter, deleted lines are struck through, and a caret rides the line
+ * currently being revealed. The gutter colour is the only colour that means
+ * anything, which is what keeps a code shot readable.
+ */
+const DEFAULTS = {
+  title: '改了哪一行',
+  lines: [
+    { text: 'function build(plan) {', kind: 'ctx' },
+    { text: '  const scenes = plan.scenes;', kind: 'ctx' },
+    { text: '  return render(scenes);', kind: 'del' },
+    { text: '  const checked = lint(scenes);', kind: 'add' },
+    { text: '  return render(checked);', kind: 'add' },
+    { text: '}', kind: 'ctx' },
+  ],
+  bg: '#0b0d12',
+  ink: '#cdd6e5',
+  accent: '#d29922',
+  revealSeconds: 0.28,   // per line
+  holdSeconds: 1.2,      // after the last line
+  monoSize: 34,
+}
+
+const cfg = Object.assign({}, DEFAULTS, window.__MS_TEMPLATE || {})
+document.documentElement.style.setProperty('--ms-bg', cfg.bg)
+document.documentElement.style.setProperty('--ms-ink', cfg.ink)
+document.documentElement.style.setProperty('--ms-accent', cfg.accent)
+
+const titleEl = document.getElementById('title')
+const codeEl = document.getElementById('code')
+titleEl.textContent = cfg.title || ''
+codeEl.style.fontSize = cfg.monoSize + 'px'
+
+const lineNodes = cfg.lines.map((line) => {
+  const node = document.createElement('div')
+  node.className = 'line ' + (line.kind || 'ctx')
+  node.textContent = line.text
+  codeEl.appendChild(node)
+  return node
+})
+
+// Author at 1920x1080, scale to the render viewport.
+const stage = document.getElementById('stage')
+function fitStage() {
+  stage.style.transform = 'scale(' + Math.min(window.innerWidth / 1920, window.innerHeight / 1080).toFixed(5) + ')'
+}
+fitStage()
+window.addEventListener('resize', fitStage)
+
+const smoothstep = (x) => { const v = Math.max(0, Math.min(1, x)); return v * v * (3 - 2 * v) }
+const charCount = (node) => node.textContent.length
+
+window.renderAt = async function (t) {
+  for (let index = 0; index < lineNodes.length; index += 1) {
+    const node = lineNodes[index]
+    const start = index * cfg.revealSeconds
+    const p = smoothstep((t - start) / cfg.revealSeconds)
+    if (p <= 0) {
+      node.classList.add('hidden')
+      continue
+    }
+    node.classList.remove('hidden')
+    // Reveal by clipping the line horizontally: characters appear left to right
+    // rather than the whole line fading, which would read as a slide.
+    const reveal = Math.min(1, p * 1.15)
+    node.style.clipPath = reveal >= 1 ? 'none' : 'inset(0 ' + ((1 - reveal) * 100).toFixed(2) + '% 0 0)'
+    node.style.opacity = '1'
+  }
+}
+</script>
+</body>
+</html>

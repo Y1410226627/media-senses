@@ -43,9 +43,12 @@ const scratch = await mkdtemp(join(tmpdir(), 'templates-test-'))
  * Structural checks (no browser needed)
  * ------------------------------------------------------------------ */
 
-await check('the catalogue has the six curated templates, each fully described', () => {
-  assert.equal(TEMPLATES.length, 6)
+await check('the catalogue has the curated templates, each fully described', () => {
+  assert.ok(TEMPLATES.length >= 9, `expected at least 9 templates, got ${TEMPLATES.length}`)
+  const seen = new Set()
   for (const meta of TEMPLATES) {
+    assert.ok(!seen.has(meta.id), `duplicate template id ${meta.id}`)
+    seen.add(meta.id)
     assert.ok(typeof meta.id === 'string' && /^[a-z-]+$/u.test(meta.id), `bad id ${meta.id}`)
     assert.ok(typeof meta.nameZh === 'string' && meta.nameZh.length > 1, `${meta.id} needs a Chinese name`)
     assert.ok(typeof meta.useWhenZh === 'string' && meta.useWhenZh.length > 20, `${meta.id} needs a real "use when" line`)

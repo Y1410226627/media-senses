@@ -321,6 +321,15 @@ plugin_manager(action="install_bundle", target="D:\\桌面\\装插件\\media-sen
 | `data-bars` | 几组可比数字 | 错峰增长、数字与形状同步、末项强调色 |
 | `ui-entrance` | 产品功能/步骤卡 | 错峰入场、ease-out 长尾、清焦、落定静止 |
 | `paper-collage` | 不靠 3D 的纵深 | 多层视差、按深度分速率、纸纹暗角、近层微缩放 |
+| `character-act` | 要点人物：眨眼、呼吸、做一个「蓄力—击出—回收」 | 四帧眨眼形状、正弦呼吸、蓄力 4–7 帧、单帧击出、回收过冲 |
+| `chart-race` | 多条数据此消彼长、排名互换 | 排名交换、数值插值、颜色保持身份 |
+| `code-diff` | 代码逐行揭示、改动高亮 | 逐行揭示、改动行高亮、等宽网格 |
+
+角色表演的节奏来自实测规则（`lib/performance.js`）：眨眼每 0.5–2.3 s 一次、形状固定为
+`[半, 闭, 闭, 半]` 四帧；身体起伏是身高的 3–7%，最低点在触地；前倾 1°（过腿）到 5–7°（触地）；
+动作节拍是 4–7 帧蓄力 + **1 帧**击出 + 4–5 帧回收。那"1 帧"是关键——击出摊到多帧就读成滑过去了。
+10 个情绪预设（`neutral/happy/excited/curious/worried/sad/angry/surprised/tired/thinking`）以参数
+（眉、眼、嘴、倾角、能量）给，不是形容词。
 
 用法：`media_moves { action: "template", id: "data-bars", params: {...}, duration: 4 }` 拿到**填好内容的完整 HTML**，
 直接交给 `media_animate { html: ..., duration, fps, width, height }` 渲成片段，再拼进 `media_build_video`。
@@ -345,6 +354,18 @@ plugin_manager(action="install_bundle", target="D:\\桌面\\装插件\\media-sen
 2. **普通 HTML** — 完全不改代码也能渲：CSS `@keyframes`、WAAPI、GSAP 时间轴（`window.__timelines`）、
    声明式 clip（`data-composition-id` + `data-start`/`data-duration`/`data-track-index`）都会被
    **逐帧 seek 到 t**。渲染器检测到没有 `renderAt` 但有上述任一结构时，自动装一个通用 shim。
+
+**第三方动画引擎**也接进来了——页面里调一行就能让引擎跟着帧走：
+
+| 引擎 | 怎么接 |
+|------|--------|
+| Lottie / Bodymovin | `MS.lottie(anim, fps)` → 渲染器用 `goToAndStop(帧)` 精确定位 |
+| Three.js | `MS.three({ mixer, renderer, scene, camera })` → 每帧 `mixer.setTime(t)` 并重渲染 |
+| Anime.js | `MS.anime(timeline)` → 自动把秒换成毫秒 |
+| 任意自研引擎 | `MS.onSeek(t => {…})` —— 通用逃生口，注册一次每帧调用 |
+
+页面里还可以直接用注入的缓动与表演函数，不必自己推导：`MS.ease(name, t)`、`MS.spring({damping, frequency}, t)`、
+`MS.inertia(t)`，以及角色用的 `MS.poseAt({emotion, t})` / `MS.blinkAt(t)` / `MS.actingBeat(frame)`。
 
 页面内可以写 `<audio data-start="0" data-duration="6" data-volume="0.5" src="music.wav">`，
 渲染后自动 `adelay`+`amix` 混进 MP4，不用再绕 `media_build_video`。
@@ -671,7 +692,8 @@ node test/change.test.mjs        # 变化量打分与选帧：切点/积分/兜�
 node test/screen.test.mjs        # 屏幕采集 + token 对齐拼图（含真实截屏）                   23 项
 node test/htmlrender.test.mjs    # 代码动画渲染：CDP、确定性、源码扫描、黑帧检测、降级          17 项
 node test/anim-runtime.test.mjs  # 运行时平权：CSS/WAAPI seek、声明式时间轴、运动模糊、页内音频  20 项
-node test/templates.test.mjs     # 6 个模板逐个真渲一遍，断言帧在动、参数生效                 19 项
+node test/templates.test.mjs     # 10 个模板逐个真渲一遍，断言帧在动、参数生效                25 项
+node test/adapters-performance.test.mjs # Lottie/Three/Anime/自研适配器 + 角色表演规则          29 项
 node test/gate.test.mjs          # 验收门禁：节奏/静帧/爆发/空档/音频五条腿 + 稀疏运动            16 项
 node test/styles-guidance.test.mjs # 风格提示词分节：不可改/可替换/禁用项（含真实库）         13 项
 node test/vocabulary.test.mjs    # 词汇库：12 曲线 + 弹簧、18 运镜、9 转场、8 外观、15 反模式    30 项
@@ -683,7 +705,7 @@ node test/vision.test.mjs        # 视觉适配：能力探测、图片预算、
 node test/montage.test.mjs       # 时间条/对比图拼装与参考 vs 成片差异度量                    19 项
 node test/vision-render.test.mjs # blind/vision 双模式报告（含 blind 逐字节回归）              31 项
 node test/e2e-v2.mjs             # 全链路：学→取风格→造画面→合成→回测→看屏幕                16 项
-                                   —— 合计 486 项断言，全部通过
+                                   —— 合计 549 项断言，全部通过
 ```
 
 夹具是**合成**的，因此有 ground truth 可比：音频夹具是 120 BPM、C 大调、4/4、24 秒的鼓+贝斯+旋律

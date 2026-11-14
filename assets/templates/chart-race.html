@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>Chart race</title>
+<style>
+  html, body { margin: 0; height: 100%; background: var(--ms-bg, #0f1116); overflow: hidden;
+               font-family: var(--ms-font, "Microsoft YaHei", sans-serif); }
+  #stage { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px;
+           padding: 100px 140px; box-sizing: border-box; transform-origin: 0 0; }
+  #title { color: var(--ms-ink, #f2f2f2); font-size: 56px; font-weight: 800; }
+  #period { color: var(--ms-muted, #8b8f9a); font-size: 34px; margin-top: 6px; margin-bottom: 58px; font-variant-numeric: tabular-nums; }
+  .row { display: flex; align-items: center; height: 72px; }
+  .label { width: 300px; color: var(--ms-ink, #f2f2f2); font-size: 32px; text-align: right; padding-right: 22px; }
+  .track { flex: 1; height: 58px; position: relative; }
+  .bar { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 5px; }
+  .value { position: absolute; top: 0; bottom: 0; display: flex; align-items: center;
+           padding-left: 14px; color: var(--ms-ink, #f2f2f2); font-size: 30px; font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="title"></div>
+  <div id="period"></div>
+  <div id="rows"></div>
+</div>
+<script>
+/*
+ * Bar chart race: values interpolate between frames, bars reorder live, and each
+ * series keeps its own colour so identity never depends on rank.
+ *
+ * The only thing that moves is the data; labels stay in a fixed column.
+ */
+const DEFAULTS = {
+  title: '排名在变，颜色不变',
+  frames: [
+    { period: '第一年', values: [82, 64, 51, 33] },
+    { period: '第二年', values: [70, 88, 47, 61] },
+    { period: '第三年', values: [61, 79, 95, 68] },
+    { period: '第四年', values: [55, 71, 88, 104] },
+  ],
+  labels: ['方案 A', '方案 B', '方案 C', '方案 D'],
+  colours: ['#e2603c', '#4f9d69', '#4a7fd0', '#c9a227'],
+  bg: '#0f1116',
+  ink: '#f2f2f2',
+  muted: '#8b8f9a',
+  secondsPerFrame: 1.6,
+  decimals: 0,
+}
+
+const cfg = Object.assign({}, DEFAULTS, window.__MS_TEMPLATE || {})
+document.documentElement.style.setProperty('--ms-bg', cfg.bg)
+
+const titleEl = document.getElementById('title')
+const periodEl = document.getElementById('period')
+const rowsEl = document.getElementById('rows')
+titleEl.textContent = cfg.title || ''
+
+const series = cfg.labels.map((label, index) => ({ label, colour: cfg.colours[index % cfg.colours.length], index }))
+const rowNodes = new Map()
+for (const item of series) {
+  const row = document.createElement('div')
+  row.className = 'row'
+  const label = document.createElement('div')
+  label.className = 'label'
+  label.textContent = item.label
+  const track = document.createElement('div')
+  track.className = 'track'
+  const bar = document.createElement('div')
+  bar.className = 'bar'
+  bar.style.background = item.colour
+  const value = document.createElement('div')
+  value.className = 'value'
+  track.appendChild(bar)
+  track.appendChild(value)
+  row.appendChild(label)
+  row.appendChild(track)
+  rowsEl.appendChild(row)
+  rowNodes.set(item.index, { row, bar, value })
+}
+
+// Author at 1920x1080, scale to the render viewport.
+const stage = document.getElementById('stage')
+function fitStage() {
+  stage.style.transform = 'scale(' + Math.min(window.innerWidth / 1920, window.innerHeight / 1080).toFixed(5) + ')'
+}
+fitStage()
+window.addEventListener('resize', fitStage)
+
+const easeInOut = (x) => { const v = Math.max(0, Math.min(1, x)); return v < 0.5 ? 2 * v * v : 1 - Math.pow(-2 * v + 2, 2) / 2 }
+
+function valuesAt(t) {
+  const frames = cfg.frames
+  const total = frames.length
+  const position = Math.max(0, Math.min(total - 1, t / cfg.secondsPerFrame))
+  const lower = Math.floor(position)
+  const upper = Math.min(total - 1, lower + 1)
+  const blend = easeInOut(position - lower)
+  const from = frames[lower].values
+  const to = frames[upper].values
+  return {
+    values: from.map((value, index) => value + ((to[index] ?? value) - value) * blend),
+    period: blend < 0.5 ? frames[lower].period : frames[upper].period,
+    index: upper,
+  }
+}
+
+window.renderAt = async function (t) {
+  const state = valuesAt(t)
+  periodEl.textContent = state.period || ''
+  const maxValue = Math.max.apply(null, state.values.concat([1]))
+  // Rank order: highest value highest on screen.
+  const order = state.values
+    .map((value, index) => ({ value, index }))
+    .sort((a, b) => b.value - a.value)
+  order.forEach((entry, rank) => {
+    const node = rowNodes.get(entry.index)
+    node.row.style.order = String(rank)
+    node.row.style.height = '72px'
+  })
+  rowsEl.style.display = 'flex'
+  rowsEl.style.flexDirection = 'column'
+  for (const entry of order) {
+    const node = rowNodes.get(entry.index)
+    const share = Math.max(0.002, entry.value / maxValue)
+    node.bar.style.width = (share * 100).toFixed(3) + '%'
+    node.value.textContent = entry.value.toFixed(cfg.decimals)
+    node.value.style.left = (share * 100).toFixed(3) + '%'
+  }
+}
+</script>
+</body>
+</html>
