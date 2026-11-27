@@ -68,6 +68,24 @@ await row('剪辑缝规则', ['lib/moves.js'], (m) => (m.CUT_SEAM_RULES.length >
 await row('镜头配方卡（≥40 张）', ['lib/shots.js'], (m) => (m.SHOT_CARDS.length >= 40 ? m.SHOT_CARDS.length : 0), 'test/shots-lint.test.mjs')
 await row('时长预算', ['lib/shots.js'], (m) => (typeof m.durationBudget === 'function' ? 1 : 0), 'test/shots-lint.test.mjs')
 
+/* ---- 声音设计（第 7 轮） ---- */
+await row('程序化音效合成（17 音色 + 峰值滞后）', ['lib/sfx.js'], (m) => (m.SFX_KINDS.length >= 17 && typeof m.measureSfxPeakLag === 'function' && typeof m.sequenceSfx === 'function' ? 3 : 0), 'test/sfx.test.mjs')
+
+/* ---- 卡点闭环（第 7 轮） ---- */
+await row('节拍网格拟合 + 鼓件三分类', ['lib/beatsync.js'], (m) => (typeof m.fitBeatGrid === 'function' && typeof m.classifyTransients === 'function' && typeof m.acceptBeatGrid === 'function' ? 3 : 0), 'test/beatsync.test.mjs')
+await row('渲后卡点回测 + 输出音轨偏移', ['lib/beatsync.js'], (m) => (typeof m.backtestAlignment === 'function' && typeof m.measureOutputAudioOffset === 'function' && typeof m.beatFrame === 'function' ? 3 : 0), 'test/beatsync.test.mjs')
+await row('门禁卡点对齐腿', ['lib/gate.js'], (m) => (typeof m.legAlignment === 'function' && Number.isFinite(m.GATE_THRESHOLDS.alignPassFrames) ? 2 : 0), 'test/gate.test.mjs')
+
+/* ---- 判例式审美准则（第 7 轮） ---- */
+await row('判例审美准则（27 条 / 11 条可判定）', ['lib/aesthetic.js'], (m) => (m.AESTHETIC_RULES.length === 27 && m.CHECKABLE_RULE_COUNT >= 11 && typeof m.auditAesthetic === 'function' ? 3 : 0), 'test/aesthetic.test.mjs')
+await row('独立终检聚合（五节 + 证据规则）', ['lib/review.js'], (m) => (m.REVIEW_SECTIONS.length === 5 && typeof m.auditFilm === 'function' && typeof m.renderReviewReport === 'function' ? 3 : 0), 'test/review.test.mjs')
+
+/* ---- 比对与交付（第 7 轮） ---- */
+await row('像素级比对（PSNR/SSIM/CIEDE2000）', ['lib/pixelqa.js'], (m) => (typeof m.comparePixels === 'function' && typeof m.regionGrid === 'function' && typeof m.decodePngPixels === 'function' ? 3 : 0), 'test/pixelqa.test.mjs')
+await row('可再编辑交付（时间线往返 + 离线 HTML）', ['lib/timeline.js'], (m) => (typeof m.planToTimeline === 'function' && typeof m.timelineToPlan === 'function' && typeof m.renderTimelineHtml === 'function' ? 3 : 0), 'test/timeline.test.mjs')
+await row('整片 MG 风格（15 套 + 3 个模板）', ['lib/mgstyles.js'], (m) => (m.MG_STYLE_COUNT === 15 && typeof m.mgStylePrompt === 'function' ? 2 : 0), 'test/mgstyles.test.mjs')
+await row('真实页面 2.5D 采集（CSS zoom 换算）', ['lib/pagecapture.js'], (m) => (typeof m.capturePage === 'function' && typeof m.layoutToCamera === 'function' && typeof m.planElementCutouts === 'function' ? 3 : 0), 'test/pagecapture.test.mjs')
+
 /* ---- 技法 ---- */
 await row('手绘/涂鸦技法（描线 + 线条沸腾）', ['assets/templates/hand-drawn-line.html'], undefined, 'test/templates.test.mjs')
 await row('角色表演（情绪 + 动作节拍）', ['lib/performance.js'], (m) => (Object.keys(m.EMOTIONS).length >= 10 && typeof m.actingBeat === 'function' ? 2 : 0), 'test/adapters-performance.test.mjs')
@@ -86,6 +104,7 @@ const required = [
   'media_probe', 'media_watch_video', 'media_listen_audio', 'media_frame', 'media_whisper',
   'media_corpus', 'media_build_video', 'media_tts', 'media_styles', 'media_moves',
   'media_animate', 'media_see', 'media_frames', 'media_compare',
+  'media_sfx', 'media_review',
 ]
 const missingTools = required.filter((name) => !registry.has(name))
 rows.push({

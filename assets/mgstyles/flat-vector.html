@@ -1,0 +1,498 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>扁平矢量 · DOTWISE</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #FFF6E9; overflow: hidden; }
+  /* 按 1920×1080 设计，外层等比缩放适配视口；任何输出尺寸都不变形。 */
+  #stage { position: absolute; left: 50%; top: 50%; width: 1920px; height: 1080px;
+           transform: translate(-50%, -50%) scale(1); transform-origin: 50% 50%; }
+  canvas { display: block; width: 1920px; height: 1080px; }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="scene" width="1920" height="1080"></canvas></div>
+<script>
+/*
+ * 整片 MG 模板 · 扁平矢量（01-flat-vector）
+ *
+ * 一镜到底的扁平世界：一个点从画面外落下，压扁回弹后变成太阳，扁平城市
+ * 按 2–4 帧错峰弹出；镜头推近窗口看到几何角色；通知气泡放大成色块擦除，
+ * 图标按节拍弹出；最后全部飞向中心组成品牌字标并定格。
+ *
+ * 确定性契约：画面完全由 window.renderAt(t) 决定；无 rAF、无时钟、无
+ * Math.random；需要变化的地方全部在初始化时用固定种子的 mulberry32 生成。
+ * 可通过 window.__MS_TEMPLATE {brand,title,tagline,seed} 与 window.__MS_DURATION
+ * 覆盖文案与时长，默认 10 秒。
+ */
+'use strict'
+
+const W = 1920
+const H = 1080
+const DUR = Number(window.__MS_DURATION) > 0 ? Number(window.__MS_DURATION) : 10
+const cfg = Object.assign({
+  brand: 'DOTWISE',
+  title: '让一个点动起来',
+  tagline: 'ONE DOT · 无限可能',
+  seed: 20261127,
+}, window.__MS_TEMPLATE || {})
+
+const PAL = {
+  blue: '#2B2BFF',
+  coral: '#FF5A4E',
+  sun: '#FFC62B',
+  mint: '#2EE6A8',
+  cream: '#FFF6E9',
+  ink: '#151433',
+  white: '#FFFFFF',
+}
+
+const canvas = document.getElementById('scene')
+const ctx = canvas.getContext('2d')
+
+/* ---------------------------------------------------------------- 工具 */
+function mulberry32(seed) {
+  let a = seed >>> 0
+  return function random() {
+    a = (a + 0x6D2B79F5) >>> 0
+    let t = Math.imul(a ^ (a >>> 15), a | 1)
+    t = t + Math.imul(t ^ (t >>> 7), 61 | t) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v)
+const lerp = (a, b, u) => a + (b - a) * u
+const smooth = (u) => { const v = clamp01(u); return v * v * (3 - 2 * v) }
+const easeInCubic = (u) => { const v = clamp01(u); return v * v * v }
+const easeOutCubic = (u) => 1 - Math.pow(1 - clamp01(u), 3)
+const easeInOutCubic = (u) => {
+  const v = clamp01(u)
+  return v < 0.5 ? 4 * v * v * v : 1 - Math.pow(-2 * v + 2, 3) / 2
+}
+const easeOutBack = (u, s = 1.5) => {
+  const v = clamp01(u)
+  return 1 + (s + 1) * Math.pow(v - 1, 3) + s * Math.pow(v - 1, 2)
+}
+function roundRect(x, y, w, h, r) {
+  const radius = Math.min(r, Math.abs(w) / 2, Math.abs(h) / 2)
+  ctx.beginPath()
+  ctx.moveTo(x + radius, y)
+  ctx.arcTo(x + w, y, x + w, y + h, radius)
+  ctx.arcTo(x + w, y + h, x, y + h, radius)
+  ctx.arcTo(x, y + h, x, y, radius)
+  ctx.arcTo(x, y, x + w, y, radius)
+  ctx.closePath()
+}
+function fillRoundRect(x, y, w, h, r, color) {
+  roundRect(x, y, w, h, r)
+  ctx.fillStyle = color
+  ctx.fill()
+}
+function text(content, x, y, size, weight, color, align = 'center', family = '"Microsoft YaHei","SimHei",sans-serif') {
+  ctx.font = weight + ' ' + size + 'px ' + family
+  ctx.textAlign = align
+  ctx.textBaseline = 'alphabetic'
+  ctx.fillStyle = color
+  ctx.fillText(content, x, y)
+}
+
+/* ------------------------------------------------ 初始化时生成的静态数据 */
+const rng = mulberry32(cfg.seed)
+const GROUND_Y = 800
+const HERO_X = 960
+const HERO_LAND_Y = 700
+const SUN_X = 960
+const SUN_Y = 250
+
+const BUILDINGS = (() => {
+  const list = []
+  const colours = [PAL.cream, PAL.mint, PAL.sun, PAL.coral, PAL.white]
+  let x = 150
+  while (x < 1710) {
+    const width = 150 + rng() * 130
+    const height = 190 + rng() * 260
+    list.push({
+      x,
+      width,
+      height,
+      colour: colours[Math.floor(rng() * colours.length)],
+      delay: 0.012 + list.length * 0.011,
+      windows: Math.floor(2 + rng() * 3),
+      rows: Math.floor(2 + rng() * 3),
+    })
+    x += width + 26 + rng() * 22
+  }
+  return list
+})()
+
+// 角色所在的楼：取中间一栋，窗口位置固定，方便镜头推近。
+const CHAR_BUILDING = (() => {
+  const target = 960
+  let best = BUILDINGS[0]
+  let bestDistance = Infinity
+  for (const building of BUILDINGS) {
+    const center = building.x + building.width / 2
+    const distance = Math.abs(center - target)
+    if (distance < bestDistance) { best = building; bestDistance = distance }
+  }
+  return best
+})()
+const WINDOW_RECT = {
+  x: CHAR_BUILDING.x + CHAR_BUILDING.width * 0.18,
+  y: GROUND_Y - CHAR_BUILDING.height * 0.78,
+  w: CHAR_BUILDING.width * 0.64,
+  h: CHAR_BUILDING.height * 0.42,
+}
+
+const CLOUDS = Array.from({ length: 4 }, () => ({
+  x: rng() * W,
+  y: 130 + rng() * 220,
+  scale: 0.6 + rng() * 0.7,
+  speed: 10 + rng() * 16,
+}))
+
+const BIRDS = Array.from({ length: 4 }, () => ({
+  x: rng() * W,
+  y: 300 + rng() * 150,
+  speed: 40 + rng() * 40,
+  phase: rng() * Math.PI * 2,
+  scale: 0.7 + rng() * 0.7,
+}))
+
+/* ------------------------------------------------------------ 分镜绘制 */
+function drawSkyAndCity(p, time) {
+  // 天空：纯色平涂，不用渐变。
+  ctx.fillStyle = PAL.blue
+  ctx.fillRect(0, 0, W, H)
+
+  // 太阳：由落下的点在上城阶段升起并变成太阳。
+  const sunIn = easeInOutCubic((p - 0.115) / 0.09)
+  const sunX = lerp(HERO_X, SUN_X, sunIn)
+  const sunY = lerp(HERO_LAND_Y, SUN_Y, sunIn)
+  const sunRadius = lerp(72, 118, sunIn)
+  if (p >= 0.10) {
+    ctx.beginPath()
+    ctx.arc(sunX, sunY, sunRadius, 0, Math.PI * 2)
+    ctx.fillStyle = sunIn < 1 ? PAL.coral : PAL.sun
+    ctx.fill()
+    // 太阳的平涂光环（硬边圆环，不使用发光）。
+    if (sunIn > 0.6) {
+      ctx.beginPath()
+      ctx.arc(sunX, sunY, sunRadius + 34, 0, Math.PI * 2)
+      ctx.strokeStyle = PAL.sun
+      ctx.lineWidth = 6
+      ctx.stroke()
+    }
+  }
+
+  // 地面：薄荷色平原 + 一条更深的平涂分层。
+  ctx.fillStyle = PAL.mint
+  ctx.fillRect(0, GROUND_Y, W, H - GROUND_Y)
+  ctx.fillStyle = '#1FC78E'
+  ctx.fillRect(0, GROUND_Y + 84, W, H - GROUND_Y - 84)
+
+  // 城市：每栋楼从地面向上弹出，落地各自带一次小回弹。
+  for (let index = 0; index < BUILDINGS.length; index += 1) {
+    const building = BUILDINGS[index]
+    const local = clamp01((p - 0.12 - building.delay) / 0.055)
+    if (local <= 0) continue
+    const grow = easeOutBack(local, 1.7)
+    const height = building.height * grow
+    const x = building.x
+    const y = GROUND_Y - height
+    ctx.fillStyle = building.colour
+    ctx.fillRect(x, y, building.width, height)
+    // 顶部深色条：扁平层次，不用渐变。
+    ctx.fillStyle = PAL.ink
+    ctx.globalAlpha = 0.12
+    ctx.fillRect(x, y, building.width, 10)
+    ctx.globalAlpha = 1
+    // 窗户：落地后按顺序点亮。
+    if (local > 0.7) {
+      const lit = clamp01((p - 0.16 - building.delay * 2) / 0.14)
+      const total = building.windows * building.rows
+      const litCount = Math.floor(total * lit)
+      ctx.fillStyle = PAL.blue
+      for (let cell = 0; cell < total; cell += 1) {
+        const column = cell % building.windows
+        const row = Math.floor(cell / building.windows)
+        const wx = x + 16 + column * ((building.width - 32) / building.windows)
+        const wy = y + 24 + row * ((height - 40) / building.rows)
+        ctx.globalAlpha = cell < litCount ? 0.85 : 0.16
+        ctx.fillRect(wx, wy, 18, 22)
+      }
+      ctx.globalAlpha = 1
+    }
+  }
+
+  // 角色所在窗口：镜头推近时是画面重心。
+  drawCharacterWindow(p, time)
+
+  // 云与鸟：全片缓慢横移，纯装饰，同一时刻不同时抢戏。
+  for (const cloud of CLOUDS) {
+    const x = ((cloud.x + p * DUR * cloud.speed) % (W + 420)) - 210
+    ctx.fillStyle = PAL.white
+    ctx.globalAlpha = 0.9
+    ctx.beginPath()
+    ctx.arc(x, cloud.y, 46 * cloud.scale, 0, Math.PI * 2)
+    ctx.arc(x + 52 * cloud.scale, cloud.y - 14 * cloud.scale, 58 * cloud.scale, 0, Math.PI * 2)
+    ctx.arc(x + 112 * cloud.scale, cloud.y + 4 * cloud.scale, 40 * cloud.scale, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.globalAlpha = 1
+  }
+  for (const bird of BIRDS) {
+    const x = (bird.x + p * DUR * bird.speed) % (W + 200) - 100
+    const flap = Math.sin(time * 8 + bird.phase) * 0.55
+    drawBird(x, bird.y, bird.scale, flap)
+  }
+}
+
+function drawBird(x, y, scale, flap) {
+  ctx.strokeStyle = PAL.ink
+  ctx.lineWidth = 4 * scale
+  ctx.lineCap = 'round'
+  ctx.beginPath()
+  ctx.moveTo(x - 22 * scale, y)
+  ctx.quadraticCurveTo(x - 10 * scale, y - (16 + 14 * flap) * scale, x, y)
+  ctx.quadraticCurveTo(x + 10 * scale, y - (16 + 14 * flap) * scale, x + 22 * scale, y)
+  ctx.stroke()
+}
+
+function drawCharacterWindow(p, time) {
+  const rect = WINDOW_RECT
+  fillRoundRect(rect.x, rect.y, rect.w, rect.h, 10, PAL.cream)
+  // 窗框
+  ctx.strokeStyle = PAL.ink
+  ctx.lineWidth = 10
+  roundRect(rect.x, rect.y, rect.w, rect.h, 10)
+  ctx.stroke()
+
+  const cx = rect.x + rect.w / 2
+  const cy = rect.y + rect.h / 2
+  // 角色：几何拼装，头 + 身体 + 一只手臂在挥。
+  const bob = Math.sin(time * 4.2) * 3
+  ctx.fillStyle = PAL.coral
+  ctx.beginPath()
+  ctx.arc(cx, cy - 26 + bob, 20, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.fillStyle = PAL.cream
+  ctx.beginPath()
+  ctx.arc(cx - 7, cy - 30 + bob, 3, 0, Math.PI * 2)
+  ctx.arc(cx + 7, cy - 30 + bob, 3, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.fillStyle = PAL.ink
+  roundRect(cx - 22, cy - 4 + bob, 44, 40, 10)
+  ctx.fill()
+  // 手臂
+  const wave = Math.sin(time * 5.4) * 0.5
+  ctx.strokeStyle = PAL.coral
+  ctx.lineWidth = 8
+  ctx.lineCap = 'round'
+  ctx.beginPath()
+  ctx.moveTo(cx + 18, cy + 8 + bob)
+  ctx.lineTo(cx + 40, cy + 8 + bob - 26 - wave * 24)
+  ctx.stroke()
+  // 手机与通知
+  ctx.fillStyle = PAL.sun
+  roundRect(cx - 10, cy + 52, 20, 26, 4)
+  ctx.fill()
+  const ping = clamp01((time - 0.42 * DUR) / 0.08)
+  if (ping > 0) {
+    const scale = easeOutBack(ping, 2.2)
+    ctx.save()
+    ctx.translate(cx + 46, cy - 8 + bob)
+    ctx.scale(scale, scale)
+    ctx.fillStyle = PAL.coral
+    roundRect(-22, -20, 44, 36, 12)
+    ctx.fill()
+    text('1', 0, 8, 24, 900, PAL.white)
+    ctx.restore()
+  }
+}
+
+/* ------------------------------------------------- 图标爆发（气泡擦除后） */
+function drawIconBurst(p, time) {
+  // 0.50–0.60 气泡放大成色块擦除；之后是图标节拍。
+  const wipe = smooth((p - 0.50) / 0.10)
+  if (wipe <= 0) return
+  const radius = wipe * 1350
+  ctx.save()
+  ctx.beginPath()
+  ctx.arc(CHAR_BUILDING.x + CHAR_BUILDING.width / 2, WINDOW_RECT.y + WINDOW_RECT.h / 2, radius, 0, Math.PI * 2)
+  ctx.clip()
+  ctx.fillStyle = PAL.cream
+  ctx.fillRect(0, 0, W, H)
+
+  const local = clamp01((p - 0.555) / 0.20)
+  const items = [
+    { x: 470, kind: 'bars', delay: 0.00 },
+    { x: 810, kind: 'check', delay: 0.08 },
+    { x: 1150, kind: 'heart', delay: 0.16 },
+    { x: 1490, kind: 'coin', delay: 0.24 },
+  ]
+  for (const item of items) {
+    const u = clamp01((local - item.delay) / 0.24)
+    if (u <= 0) continue
+    const pop = easeOutBack(u, 1.8)
+    ctx.save()
+    ctx.translate(item.x, 540)
+    ctx.scale(pop, pop)
+    if (item.kind === 'bars') {
+      const heights = [90, 150, 220]
+      for (let i = 0; i < heights.length; i += 1) {
+        const grow = easeOutCubic(clamp01((u - i * 0.12) / 0.5))
+        ctx.fillStyle = i === 2 ? PAL.coral : PAL.blue
+        ctx.fillRect(-100 + i * 74, 130 - heights[i] * grow, 54, heights[i] * grow)
+      }
+      ctx.fillStyle = PAL.ink
+      ctx.fillRect(-104, 132, 230, 8)
+    } else if (item.kind === 'check') {
+      ctx.beginPath()
+      ctx.arc(0, 0, 120, 0, Math.PI * 2)
+      ctx.fillStyle = PAL.mint
+      ctx.fill()
+      const reveal = easeInOutCubic(clamp01(u / 0.65))
+      ctx.beginPath()
+      ctx.moveTo(-52, 4)
+      ctx.lineTo(-14, 42)
+      ctx.lineTo(58, -44)
+      ctx.lineWidth = 18
+      ctx.lineCap = 'round'
+      ctx.lineJoin = 'round'
+      ctx.setLineDash([180, 180])
+      ctx.lineDashOffset = 180 * (1 - reveal)
+      ctx.strokeStyle = PAL.cream
+      ctx.stroke()
+      ctx.setLineDash([])
+    } else if (item.kind === 'heart') {
+      const beat = 1 + Math.sin(time * 6) * 0.04
+      ctx.scale(beat, beat)
+      ctx.beginPath()
+      ctx.moveTo(0, 72)
+      ctx.bezierCurveTo(-96, 6, -60, -78, 0, -30)
+      ctx.bezierCurveTo(60, -78, 96, 6, 0, 72)
+      ctx.fillStyle = PAL.coral
+      ctx.fill()
+    } else if (item.kind === 'coin') {
+      const flip = Math.cos(time * 7)
+      ctx.fillStyle = PAL.sun
+      ctx.beginPath()
+      ctx.ellipse(0, 0, 110 * Math.abs(flip) + 12, 110, 0, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.strokeStyle = PAL.ink
+      ctx.lineWidth = 8
+      ctx.stroke()
+      if (Math.abs(flip) > 0.35) text('$', 0, 40, 100, 900, PAL.ink)
+    }
+    ctx.restore()
+  }
+
+  // 图标区标题：一句短文案，帮观众理解这一段的语义。
+  const titleIn = clamp01((p - 0.60) / 0.10)
+  if (titleIn > 0) {
+    ctx.globalAlpha = titleIn
+    text('一个通知，四种情绪', 960, 880, 44, 800, PAL.ink)
+    ctx.globalAlpha = 1
+  }
+  ctx.restore()
+}
+
+/* --------------------------------------------------------- 品牌字标收尾 */
+function drawLogo(p, time) {
+  const u = clamp01((p - 0.775) / 0.12)
+  if (u <= 0) return
+  // 图标已经飞出画面：底色回到纸白。
+  ctx.fillStyle = PAL.cream
+  ctx.fillRect(0, 0, W, H)
+
+  const settle = easeOutBack(u, 1.35)
+  const scale = lerp(1.35, 1, easeOutCubic(u)) * settle
+  ctx.save()
+  ctx.translate(W / 2, 540)
+  ctx.scale(scale, scale)
+  ctx.globalAlpha = clamp01(u * 1.6)
+
+  // 圆点 + 字标 + 一句话。
+  ctx.font = '900 132px "Arial Black","Microsoft YaHei",sans-serif'
+  const wordWidth = ctx.measureText(cfg.brand).width
+  const total = wordWidth + 150
+  const startX = -total / 2
+  const bob = Math.sin(time * 3.1) * 4
+  ctx.beginPath()
+  ctx.arc(startX + 44, -8 + bob, 34, 0, Math.PI * 2)
+  ctx.fillStyle = PAL.coral
+  ctx.fill()
+  ctx.textAlign = 'left'
+  text(cfg.brand, startX + 96, 36, 132, 900, PAL.ink, 'left', '"Arial Black","Microsoft YaHei",sans-serif')
+  text(cfg.title, 0, 120, 52, 800, PAL.ink)
+  ctx.globalAlpha = 0.72
+  text(cfg.tagline, 0, 178, 30, 500, PAL.ink)
+  ctx.globalAlpha = 1
+  ctx.restore()
+
+  // 底部一条生长中的强调线，避免画面完全静止。
+  const line = easeInOutCubic(clamp01((p - 0.80) / 0.10))
+  ctx.fillStyle = PAL.coral
+  ctx.fillRect(W / 2 - 160 * line, 760, 320 * line, 6)
+}
+
+/* --------------------------------------------------------------- 主绘制 */
+function draw(t) {
+  const time = Math.max(0, t)
+  const p = DUR > 0 ? clamp01(time / DUR) : 0
+
+  // 镜头：0.30–0.50 推近窗口；其余时间回到全景。缩放不作动画混入 logo 段。
+  let camScale = 1
+  let camX = W / 2
+  let camY = H / 2
+  const push = clamp01((p - 0.30) / 0.16) * (1 - clamp01((p - 0.49) / 0.06))
+  if (push > 0) {
+    const focusX = CHAR_BUILDING.x + CHAR_BUILDING.width / 2
+    const focusY = WINDOW_RECT.y + WINDOW_RECT.h / 2
+    const amount = easeInOutCubic(push)
+    camScale = lerp(1, 2.1, amount)
+    camX = lerp(W / 2, focusX, amount)
+    camY = lerp(H / 2, focusY, amount)
+  }
+
+  ctx.save()
+  ctx.translate(W / 2, H / 2)
+  ctx.scale(camScale, camScale)
+  ctx.translate(-camX, -camY)
+  drawSkyAndCity(p, time)
+  ctx.restore()
+
+  drawIconBurst(p, time)
+  drawLogo(p, time)
+
+  // 钩子：落下的点。落地压扁 → 回弹 → 加入太阳。
+  if (p < 0.16) {
+    const fall = clamp01(p / 0.09)
+    const y = lerp(-180, HERO_LAND_Y, easeInCubic(fall))
+    const squash = fall >= 1 ? 1 + Math.sin(clamp01((p - 0.09) / 0.07) * Math.PI) * 0.16 : 1
+    ctx.save()
+    ctx.translate(HERO_X, y)
+    ctx.scale(squash, 2 - squash)
+    ctx.beginPath()
+    ctx.arc(0, 0, 72, 0, Math.PI * 2)
+    ctx.fillStyle = PAL.coral
+    ctx.fill()
+    ctx.restore()
+  }
+}
+
+window.renderAt = async function (t) { draw(t) }
+
+/* ------------------------------------------------------------ 适配视口 */
+const stage = document.getElementById('stage')
+function fit() {
+  const scale = Math.min(window.innerWidth / W, window.innerHeight / H)
+  stage.style.transform = 'translate(-50%, -50%) scale(' + scale.toFixed(4) + ')'
+}
+fit()
+window.addEventListener('resize', fit)
+draw(0)
+</script>
+</body>
+</html>

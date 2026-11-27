@@ -1,0 +1,654 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>赛博 HUD · ORCA-3</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #020B0D; overflow: hidden; }
+  #stage { position: absolute; left: 50%; top: 50%; width: 1920px; height: 1080px;
+           transform: translate(-50%, -50%) scale(1); transform-origin: 50% 50%; }
+  canvas { display: block; width: 1920px; height: 1080px; }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="scene" width="1920" height="1080"></canvas></div>
+<script>
+/*
+ * 整片 MG 模板 · 赛博 HUD / FUI（22-hud）
+ *
+ * 深青黑底上的虚构抬头显示：同心环与刻度先亮起，雷达扫描发现目标，
+ * 线框全息体逐线建立，四角锁定框 snap 1.4→1.0，随后整屏切警报橙，
+ * 坐标以打字机落定，最后停在锁定帧上做微动与克制的 glitch。
+ *
+ * 确定性契约：画面完全由 window.renderAt(t) 决定；无 rAF、无时钟、无
+ * Math.random；所有数据、闪烁与 glitch 时间点都在初始化时用固定种子的
+ * mulberry32 生成，逐帧只按 t 取值。
+ * 可通过 window.__MS_TEMPLATE {target,code,seed} 与 window.__MS_DURATION 覆盖。
+ */
+'use strict'
+
+const W = 1920
+const H = 1080
+const DUR = Number(window.__MS_DURATION) > 0 ? Number(window.__MS_DURATION) : 10
+const cfg = Object.assign({
+  target: 'ORCA-3',
+  code: 'SIG-0427',
+  seed: 20261127,
+}, window.__MS_TEMPLATE || {})
+
+const PAL = {
+  bg: '#020B0D',
+  cyan: '#00E5FF',
+  orange: '#FF6A00',
+  green: '#9BFF3D',
+  white: '#E8FFFF',
+  dim: 'rgba(0,229,255,0.22)',
+}
+
+const canvas = document.getElementById('scene')
+const ctx = canvas.getContext('2d')
+const CX = 960
+const CY = 520
+
+/* ---------------------------------------------------------------- 工具 */
+function mulberry32(seed) {
+  let a = seed >>> 0
+  return function random() {
+    a = (a + 0x6D2B79F5) >>> 0
+    let t = Math.imul(a ^ (a >>> 15), a | 1)
+    t = t + Math.imul(t ^ (t >>> 7), 61 | t) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v)
+const lerp = (a, b, u) => a + (b - a) * u
+const smooth = (u) => { const v = clamp01(u); return v * v * (3 - 2 * v) }
+const easeOutCubic = (u) => 1 - Math.pow(1 - clamp01(u), 3)
+const easeOutQuint = (u) => 1 - Math.pow(1 - clamp01(u), 5)
+const easeInOutCubic = (u) => {
+  const v = clamp01(u)
+  return v < 0.5 ? 4 * v * v * v : 1 - Math.pow(-2 * v + 2, 3) / 2
+}
+/** 32 位整数哈希：给「数字乱跳」和 glitch 提供确定性伪随机。 */
+function hashInt(a, b, c) {
+  let h = (Math.imul(a | 0, 374761393) + Math.imul(b | 0, 668265263) + Math.imul(c | 0, 1274126177)) | 0
+  h = Math.imul(h ^ (h >>> 13), 1274126177) | 0
+  return (h ^ (h >>> 16)) >>> 0
+}
+function pad(value, length) {
+  let text = String(value)
+  while (text.length < length) text = '0' + text
+  return text
+}
+function rgbOf(hex) {
+  const value = parseInt(hex.slice(1), 16)
+  return [(value >> 16) & 255, (value >> 8) & 255, value & 255]
+}
+function mixColour(fromHex, toHex, t) {
+  const from = rgbOf(fromHex)
+  const to = rgbOf(toHex)
+  const u = clamp01(t)
+  return 'rgb(' + Math.round(lerp(from[0], to[0], u)) + ',' + Math.round(lerp(from[1], to[1], u)) + ',' + Math.round(lerp(from[2], to[2], u)) + ')'
+}
+function line(x0, y0, x1, y1, colour, width) {
+  ctx.strokeStyle = colour
+  ctx.lineWidth = width
+  ctx.beginPath()
+  ctx.moveTo(x0, y0)
+  ctx.lineTo(x1, y1)
+  ctx.stroke()
+}
+function mono(size, weight, colour, align = 'left') {
+  ctx.font = weight + ' ' + size + 'px "Consolas","Courier New",monospace'
+  ctx.fillStyle = colour
+  ctx.textAlign = align
+  ctx.textBaseline = 'alphabetic'
+}
+function cjk(size, weight, colour, align = 'left') {
+  ctx.font = weight + ' ' + size + 'px "Microsoft YaHei",sans-serif'
+  ctx.fillStyle = colour
+  ctx.textAlign = align
+  ctx.textBaseline = 'alphabetic'
+}
+
+/* ------------------------------------------------ 初始化时生成的静态数据 */
+const rng = mulberry32(cfg.seed)
+const HEXES = (() => {
+  const list = []
+  const radius = 34
+  const height = Math.sqrt(3) * radius
+  for (let col = -2; col < 40; col += 1) {
+    for (let row = -2; row < 22; row += 1) {
+      const x = col * radius * 1.5
+      const y = row * height + (col % 2 === 0 ? 0 : height / 2)
+      if (x < -80 || x > W + 80 || y < -80 || y > H + 80) continue
+      list.push({ x, y })
+    }
+  }
+  return list
+})()
+
+const BLIPS = Array.from({ length: 7 }, () => ({
+  angle: rng() * Math.PI * 2,
+  radius: 90 + rng() * 240,
+  delay: 0.30 + rng() * 0.12,
+  size: 2.5 + rng() * 2.5,
+}))
+
+const GLITCHES = Array.from({ length: 11 }, () => ({
+  start: 0.58 + rng() * 0.40,
+  duration: 0.012 + rng() * 0.020,
+  y: rng() * H,
+  height: 6 + rng() * 34,
+  shift: (rng() > 0.5 ? 1 : -1) * (4 + rng() * 16),
+}))
+
+const NOISE_DOTS = Array.from({ length: 420 }, () => ({
+  x: rng() * W,
+  y: rng() * H,
+  alpha: 0.015 + rng() * 0.045,
+}))
+
+const ROWS = [
+  { label: 'SIG', value: '23.417', unit: 'dBm' },
+  { label: 'FREQ', value: '9.640', unit: 'GHz' },
+  { label: 'LAT', value: "N31°14′", unit: '' },
+  { label: 'LON', value: "E121°29′", unit: '' },
+  { label: 'VEL', value: '418.6', unit: 'm/s' },
+  { label: 'ALT', value: '12400', unit: 'm' },
+  { label: 'TRK', value: '092', unit: '°' },
+  { label: 'PWR', value: '87', unit: '%' },
+]
+
+const SPARK = Array.from({ length: 2 }, () => Array.from({ length: 64 }, () => rng()))
+const STATUS_LINES = [
+  { text: 'SENSOR ARRAY ONLINE', start: 0.08 },
+  { text: 'CALIBRATING OPTICS', start: 0.16 },
+  { text: 'SIGNAL ACQUIRED', start: 0.30 },
+  { text: 'TRACE COMPLETE', start: 0.48 },
+]
+
+/* ----------------------------------------------------------- 分镜绘制 */
+function drawBoot(p) {
+  const boot = smooth((p - 0.0) / 0.16)
+  // 中心点与十字轴线
+  ctx.globalAlpha = boot
+  line(CX - 560 * boot, CY, CX - 40, CY, PAL.cyan, 1.5)
+  line(CX + 40, CY, CX + 560 * boot, CY, PAL.cyan, 1.5)
+  line(CX, CY - 380 * boot, CX, CY - 40, PAL.cyan, 1.5)
+  line(CX, CY + 40, CX, CY + 380 * boot, PAL.cyan, 1.5)
+  // 中央小方块
+  ctx.strokeStyle = PAL.cyan
+  ctx.lineWidth = 2
+  ctx.strokeRect(CX - 12, CY - 12, 24, 24)
+  ctx.globalAlpha = 1
+}
+
+function drawHexGrid(p) {
+  const reveal = smooth((p - 0.05) / 0.20)
+  if (reveal <= 0) return
+  ctx.globalAlpha = reveal * 0.5
+  ctx.strokeStyle = 'rgba(0,229,255,0.20)'
+  ctx.lineWidth = 1
+  const radius = 34
+  for (const hex of HEXES) {
+    ctx.beginPath()
+    for (let corner = 0; corner < 6; corner += 1) {
+      const angle = (Math.PI / 3) * corner - Math.PI / 6
+      const x = hex.x + radius * Math.cos(angle)
+      const y = hex.y + radius * Math.sin(angle)
+      if (corner === 0) ctx.moveTo(x, y)
+      else ctx.lineTo(x, y)
+    }
+    ctx.closePath()
+    ctx.stroke()
+  }
+  ctx.globalAlpha = 1
+}
+
+function drawRings(p, time, alert) {
+  const reveal = smooth((p - 0.04) / 0.18)
+  if (reveal <= 0) return
+  const colour = mixColour(PAL.cyan, PAL.orange, alert)
+  // 三条同心环，不同转速与方向。
+  const rings = [
+    { radius: 180, speed: 0.22, ticks: 72, tickLength: 6 },
+    { radius: 282, speed: -0.14, ticks: 36, tickLength: 10 },
+    { radius: 384, speed: 0.08, ticks: 12, tickLength: 18 },
+  ]
+  for (let ringIndex = 0; ringIndex < rings.length; ringIndex += 1) {
+    const ring = rings[ringIndex]
+    ctx.globalAlpha = reveal * (0.5 - ringIndex * 0.08)
+    ctx.strokeStyle = colour
+    ctx.lineWidth = ringIndex === 0 ? 2 : 1.2
+    ctx.beginPath()
+    ctx.arc(CX, CY, ring.radius, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * reveal)
+    ctx.stroke()
+    const spin = time * ring.speed
+    for (let tick = 0; tick < ring.ticks; tick += 1) {
+      const angle = spin + (tick / ring.ticks) * Math.PI * 2
+      const inner = ring.radius - ring.tickLength
+      const outer = ring.radius
+      ctx.globalAlpha = reveal * 0.30
+      line(CX + Math.cos(angle) * inner, CY + Math.sin(angle) * inner, CX + Math.cos(angle) * outer, CY + Math.sin(angle) * outer, colour, 1)
+    }
+  }
+  // 粗弧段：三组 30° 弧，制造机械层级。
+  ctx.globalAlpha = reveal * 0.8
+  for (let arcIndex = 0; arcIndex < 3; arcIndex += 1) {
+    const start = time * 0.12 + (arcIndex * Math.PI * 2) / 3
+    ctx.beginPath()
+    ctx.arc(CX, CY, 330, start, start + Math.PI / 6)
+    ctx.strokeStyle = colour
+    ctx.lineWidth = 5
+    ctx.stroke()
+  }
+  ctx.globalAlpha = 1
+}
+
+function drawRadar(p, time, alert) {
+  const reveal = smooth((p - 0.12) / 0.16)
+  if (reveal <= 0) return
+  const radius = 300
+  const sweep = (time * 1.5) % (Math.PI * 2)
+  const colour = mixColour(PAL.cyan, PAL.orange, alert)
+  ctx.save()
+  ctx.globalAlpha = reveal * 0.55
+  // 用 24 片扇形模拟跟踪渐变（不依赖 conic-gradient）。
+  const slices = 24
+  for (let slice = 0; slice < slices; slice += 1) {
+    const a1 = sweep - (slice * (Math.PI * 2)) / slices
+    const a0 = a1 - (Math.PI * 2) / slices
+    ctx.beginPath()
+    ctx.moveTo(CX, CY)
+    ctx.arc(CX, CY, radius, a0, a1)
+    ctx.closePath()
+    ctx.fillStyle = 'rgba(0,229,255,' + 0.22 * (1 - slice / slices) + ')'
+    if (alert > 0.01) ctx.fillStyle = 'rgba(255,106,0,' + 0.22 * (1 - slice / slices) * alert + ')'
+    ctx.fill()
+  }
+  ctx.globalAlpha = reveal * 0.85
+  ctx.beginPath()
+  ctx.moveTo(CX, CY)
+  ctx.lineTo(CX + Math.cos(sweep) * radius, CY + Math.sin(sweep) * radius)
+  ctx.strokeStyle = colour
+  ctx.lineWidth = 2
+  ctx.stroke()
+  // 目标点：雷达扫过时闪一次。
+  for (const blip of BLIPS) {
+    if (p < blip.delay) continue
+    let delta = sweep - blip.angle
+    while (delta < 0) delta += Math.PI * 2
+    const brightness = delta < 0.6 ? 1 - delta / 0.6 : 0.10
+    const x = CX + Math.cos(blip.angle) * blip.radius
+    const y = CY + Math.sin(blip.angle) * blip.radius
+    ctx.globalAlpha = reveal * brightness
+    ctx.beginPath()
+    ctx.arc(x, y, blip.size, 0, Math.PI * 2)
+    ctx.fillStyle = colour
+    ctx.fill()
+    ctx.beginPath()
+    ctx.arc(x, y, blip.size + 6, 0, Math.PI * 2)
+    ctx.strokeStyle = colour
+    ctx.lineWidth = 1
+    ctx.stroke()
+  }
+  ctx.restore()
+  ctx.globalAlpha = 1
+}
+
+function drawGlobe(p, time, alert) {
+  // 线框全息体：逐线建立，随后持续旋转。
+  const build = smooth((p - 0.36) / 0.18)
+  if (build <= 0) return
+  const radius = 172
+  const rotation = time * 0.55
+  const colour = mixColour(PAL.cyan, PAL.orange, alert)
+  const project = (lat, lon) => {
+    const cosLat = Math.cos(lat)
+    const x = cosLat * Math.sin(lon + rotation)
+    const y = Math.sin(lat)
+    const z = cosLat * Math.cos(lon + rotation)
+    return { x: CX + x * radius, y: CY + y * radius, z }
+  }
+  ctx.save()
+  ctx.globalAlpha = 0.9
+  const latitudes = [-60, -30, 0, 30, 60].map((deg) => (deg * Math.PI) / 180)
+  const longitudeCount = 12
+  let lineIndex = 0
+  const totalLines = latitudes.length + longitudeCount
+  for (const lat of latitudes) {
+    lineIndex += 1
+    if (lineIndex / totalLines > build) continue
+    let previous = null
+    for (let step = 0; step <= 72; step += 1) {
+      const lon = (step / 72) * Math.PI * 2
+      const point = project(lat, lon)
+      if (previous !== null) {
+        ctx.beginPath()
+        ctx.moveTo(previous.x, previous.y)
+        ctx.lineTo(point.x, point.y)
+        const front = (previous.z + point.z) / 2 > 0
+        ctx.strokeStyle = front ? colour : 'rgba(0,229,255,0.12)'
+        if (alert > 0.01) ctx.strokeStyle = front ? colour : 'rgba(255,106,0,0.12)'
+        ctx.lineWidth = front ? 1.4 : 0.8
+        ctx.stroke()
+      }
+      previous = point
+    }
+  }
+  for (let lonIndex = 0; lonIndex < longitudeCount; lonIndex += 1) {
+    lineIndex += 1
+    if (lineIndex / totalLines > build) continue
+    const lon = (lonIndex / longitudeCount) * Math.PI * 2
+    let previous = null
+    for (let step = 0; step <= 36; step += 1) {
+      const lat = -Math.PI / 2 + (step / 36) * Math.PI
+      const point = project(lat, lon)
+      if (previous !== null) {
+        ctx.beginPath()
+        ctx.moveTo(previous.x, previous.y)
+        ctx.lineTo(point.x, point.y)
+        const front = (previous.z + point.z) / 2 > 0
+        ctx.strokeStyle = front ? colour : 'rgba(0,229,255,0.10)'
+        if (alert > 0.01) ctx.strokeStyle = front ? colour : 'rgba(255,106,0,0.10)'
+        ctx.lineWidth = front ? 1.1 : 0.7
+        ctx.stroke()
+      }
+      previous = point
+    }
+  }
+  // 全息体的水平扫描线
+  const scan = ((time * 0.7) % 2 - 1) * radius
+  if (Math.abs(scan) < radius) {
+    ctx.save()
+    ctx.beginPath()
+    ctx.arc(CX, CY, radius, 0, Math.PI * 2)
+    ctx.clip()
+    ctx.globalAlpha = 0.35
+    ctx.fillStyle = colour
+    ctx.fillRect(CX - radius, CY + scan, radius * 2, 14)
+    ctx.restore()
+  }
+  ctx.restore()
+  ctx.globalAlpha = 1
+}
+
+function drawTargetBrackets(p, time, alert) {
+  const appear = smooth((p - 0.52) / 0.08)
+  if (appear <= 0) return
+  const lock = clamp01((p - 0.66) / 0.10)
+  // 四角括号：从 1.4 倍 snap 到 1.0 倍，快出缓入。
+  const scale = lerp(1.4, 1, easeOutQuint(lock))
+  const distance = 236 * scale
+  const arm = 44 * scale
+  const colour = mixColour(PAL.cyan, PAL.orange, alert)
+  ctx.globalAlpha = appear
+  ctx.strokeStyle = colour
+  ctx.lineWidth = 3
+  const corners = [
+    { x: CX - distance, y: CY - distance, dx: 1, dy: 1 },
+    { x: CX + distance, y: CY - distance, dx: -1, dy: 1 },
+    { x: CX - distance, y: CY + distance, dx: 1, dy: -1 },
+    { x: CX + distance, y: CY + distance, dx: -1, dy: -1 },
+  ]
+  for (const corner of corners) {
+    ctx.beginPath()
+    ctx.moveTo(corner.x + corner.dx * arm, corner.y)
+    ctx.lineTo(corner.x, corner.y)
+    ctx.lineTo(corner.x, corner.y + corner.dy * arm)
+    ctx.stroke()
+  }
+  // 锁定后的脉冲圈
+  if (lock >= 1) {
+    const age = (time - (DUR * 0.76)) % 1.6
+    if (age >= 0 && age < 1.2) {
+      const spread = easeOutCubic(age / 1.2) * 120
+      ctx.globalAlpha = (1 - age / 1.2) * 0.6
+      ctx.beginPath()
+      ctx.arc(CX, CY, distance + spread, 0, Math.PI * 2)
+      ctx.strokeStyle = colour
+      ctx.lineWidth = 2
+      ctx.stroke()
+    }
+  }
+  ctx.globalAlpha = 1
+}
+
+function drawDataColumns(p, time, alert) {
+  const appear = smooth((p - 0.18) / 0.14)
+  if (appear <= 0) return
+  const colour = mixColour(PAL.cyan, PAL.orange, alert)
+  const x = 1490
+  for (let index = 0; index < ROWS.length; index += 1) {
+    const row = ROWS[index]
+    const rowIn = smooth((p - 0.18 - index * 0.015) / 0.08)
+    if (rowIn <= 0) continue
+    const y = 246 + index * 62
+    ctx.globalAlpha = rowIn * 0.9
+    mono(20, 'normal', 'rgba(0,229,255,0.55)')
+    ctx.fillText(row.label, x, y)
+    // 数字先乱跳 3–5 帧再落定：用 t 的量化帧做哈希，保持确定性。
+    const settle = 0.20 + index * 0.012
+    let valueText = row.value
+    if (p < settle) {
+      const frame = Math.floor(time * 24)
+      let scrambled = ''
+      for (let charIndex = 0; charIndex < row.value.length; charIndex += 1) {
+        const char = row.value[charIndex]
+        if (char >= '0' && char <= '9') {
+          scrambled += String(hashInt(cfg.seed, index * 17 + charIndex, frame) % 10)
+        } else {
+          scrambled += char
+        }
+      }
+      valueText = scrambled
+    }
+    mono(34, 'bold', colour)
+    ctx.fillText(valueText, x + 140, y)
+    if (row.unit.length > 0) {
+      mono(18, 'normal', 'rgba(232,255,255,0.55)')
+      ctx.fillText(row.unit, x + 330, y)
+    }
+    // 行尾横条
+    ctx.globalAlpha = rowIn * 0.4
+    line(x + 390, y - 10, x + 390 + 70 * rowIn, y - 10, colour, 2)
+  }
+  ctx.globalAlpha = 1
+}
+
+function drawStatusBlock(p, time, alert) {
+  const appear = smooth((p - 0.06) / 0.10)
+  if (appear <= 0) return
+  const colour = mixColour(PAL.green, PAL.orange, alert)
+  ctx.globalAlpha = appear
+  for (let index = 0; index < STATUS_LINES.length; index += 1) {
+    const entry = STATUS_LINES[index]
+    if (p < entry.start) continue
+    const chars = Math.floor(clamp01((p - entry.start) / 0.05) * entry.text.length)
+    const text = entry.text.slice(0, chars)
+    mono(20, 'normal', colour)
+    ctx.fillText('> ' + text, 150, 260 + index * 34)
+  }
+  // 光标闪烁：按帧量化，不用真实时钟。
+  if (Math.floor(time * 2) % 2 === 0) {
+    ctx.fillStyle = colour
+    ctx.fillRect(150, 260 + STATUS_LINES.length * 34 - 16, 12, 20)
+  }
+  ctx.globalAlpha = 1
+}
+
+function drawSparkline(p, time, alert) {
+  const appear = smooth((p - 0.28) / 0.14)
+  if (appear <= 0) return
+  const colour = mixColour(PAL.cyan, PAL.orange, alert)
+  const originX = 150
+  const originY = 820
+  const width = 420
+  const height = 170
+  ctx.globalAlpha = appear * 0.85
+  ctx.strokeStyle = 'rgba(0,229,255,0.22)'
+  ctx.lineWidth = 1
+  for (let grid = 0; grid <= 4; grid += 1) {
+    const y = originY - (height * grid) / 4
+    line(originX, y, originX + width, y, 'rgba(0,229,255,0.16)', 1)
+  }
+  for (let series = 0; series < SPARK.length; series += 1) {
+    const values = SPARK[series]
+    const reveal = clamp01((p - 0.30 - series * 0.04) / 0.14)
+    const count = Math.max(2, Math.floor(values.length * reveal))
+    ctx.beginPath()
+    for (let index = 0; index < count; index += 1) {
+      const x = originX + (index / (values.length - 1)) * width
+      const y = originY - values[index] * height * (series === 0 ? 1 : 0.55) - (series === 1 ? 20 : 0)
+      if (index === 0) ctx.moveTo(x, y)
+      else ctx.lineTo(x, y)
+    }
+    ctx.strokeStyle = series === 0 ? colour : 'rgba(155,255,61,0.8)'
+    ctx.lineWidth = series === 0 ? 2.5 : 1.5
+    ctx.stroke()
+  }
+  mono(18, 'normal', 'rgba(0,229,255,0.6)')
+  ctx.fillText('SIGNAL TREND / 64 SAMPLES', originX, originY + 34)
+  ctx.globalAlpha = 1
+}
+
+function drawFrames(p, time, alert) {
+  const appear = smooth((p - 0.02) / 0.12)
+  if (appear <= 0) return
+  const colour = mixColour(PAL.cyan, PAL.orange, alert)
+  ctx.globalAlpha = appear * 0.85
+  mono(22, 'bold', colour)
+  ctx.fillText('SYS // ' + cfg.target, 150, 110)
+  mono(18, 'normal', 'rgba(0,229,255,0.5)')
+  ctx.fillText('FUI v5.3  •  TRACE ' + cfg.code, 150, 142)
+  const frame = pad(Math.floor(time * 30) % 10000, 4)
+  const randomish = pad(hashInt(cfg.seed, 7, Math.floor(time * 12)) % 100000, 5)
+  ctx.textAlign = 'right'
+  mono(20, 'normal', colour)
+  ctx.fillText('T+ ' + frame + 'F / ' + randomish, W - 150, 110)
+  ctx.textAlign = 'left'
+  // 四角括号框架
+  ctx.strokeStyle = colour
+  ctx.lineWidth = 2
+  const margin = 70
+  const arm = 54
+  const corners = [
+    { x: margin, y: margin, dx: 1, dy: 1 },
+    { x: W - margin, y: margin, dx: -1, dy: 1 },
+    { x: margin, y: H - margin, dx: 1, dy: -1 },
+    { x: W - margin, y: H - margin, dx: -1, dy: -1 },
+  ]
+  for (const corner of corners) {
+    ctx.beginPath()
+    ctx.moveTo(corner.x + corner.dx * arm, corner.y)
+    ctx.lineTo(corner.x, corner.y)
+    ctx.lineTo(corner.x, corner.y + corner.dy * arm)
+    ctx.stroke()
+  }
+  // 底部刻度尺
+  ctx.globalAlpha = appear * 0.5
+  for (let tick = 0; tick < 24; tick += 1) {
+    const x = 720 + tick * 26
+    line(x, H - 96, x, H - 96 - (tick % 4 === 0 ? 14 : 7), colour, 1)
+  }
+  ctx.globalAlpha = 1
+}
+
+function drawLockText(p, alert) {
+  const appear = smooth((p - 0.70) / 0.05)
+  if (appear <= 0) return
+  const colour = mixColour(PAL.cyan, PAL.orange, alert)
+  const blink = Math.floor(p * 40) % 2 === 0 ? 1 : 0.82
+  ctx.globalAlpha = appear * blink
+  ctx.textAlign = 'center'
+  ctx.font = 'bold 58px "Consolas","Courier New",monospace'
+  // RGB 色差：文字先画红/青两遍，再压主色。
+  ctx.fillStyle = 'rgba(255,0,60,0.55)'
+  ctx.fillText('TARGET LOCKED', CX + 3, 760)
+  ctx.fillStyle = 'rgba(0,229,255,0.55)'
+  ctx.fillText('TARGET LOCKED', CX - 3, 760)
+  ctx.fillStyle = colour
+  ctx.fillText('TARGET LOCKED', CX, 760)
+  ctx.font = '600 38px "Microsoft YaHei",sans-serif'
+  ctx.fillStyle = colour
+  ctx.fillText('目标锁定 · ' + cfg.target, CX, 812)
+  ctx.font = 'normal 24px "Consolas","Courier New",monospace'
+  ctx.fillStyle = 'rgba(232,255,255,0.78)'
+  ctx.fillText("N31°14′ / E121°29′  •  ALT 12.4 KM  •  CONF 0.98", CX, 850)
+  ctx.textAlign = 'left'
+  ctx.globalAlpha = 1
+}
+
+function drawGlitches(p) {
+  for (const glitch of GLITCHES) {
+    if (p < glitch.start || p > glitch.start + glitch.duration) continue
+    ctx.drawImage(canvas, 0, glitch.y, W, glitch.height, glitch.shift, glitch.y, W, glitch.height)
+  }
+}
+
+function drawOverlays(time, alert) {
+  // 扫描线
+  ctx.fillStyle = 'rgba(0,0,0,0.16)'
+  for (let y = 0; y < H; y += 4) ctx.fillRect(0, y, W, 2)
+  // 静态噪点（初始化时生成，逐帧不变）
+  for (const dot of NOISE_DOTS) {
+    ctx.fillStyle = 'rgba(232,255,255,' + dot.alpha + ')'
+    ctx.fillRect(dot.x, dot.y, 1, 1)
+  }
+  // 警报时的呼吸边框
+  if (alert > 0.01) {
+    const pulse = 0.5 + 0.5 * Math.sin(time * Math.PI * 8)
+    ctx.globalAlpha = alert * 0.35 * pulse
+    ctx.strokeStyle = PAL.orange
+    ctx.lineWidth = 10
+    ctx.strokeRect(24, 24, W - 48, H - 48)
+    ctx.globalAlpha = 1
+  }
+  // 暗角
+  const vignette = ctx.createRadialGradient(W / 2, H / 2, 360, W / 2, H / 2, 1100)
+  vignette.addColorStop(0, 'rgba(0,0,0,0)')
+  vignette.addColorStop(1, 'rgba(0,0,0,0.62)')
+  ctx.fillStyle = vignette
+  ctx.fillRect(0, 0, W, H)
+}
+
+/* --------------------------------------------------------------- 主绘制 */
+function draw(t) {
+  const time = Math.max(0, t)
+  const p = clamp01(time / (DUR > 0 ? DUR : 1))
+  const alert = smooth((p - 0.68) / 0.07)
+
+  ctx.fillStyle = PAL.bg
+  ctx.fillRect(0, 0, W, H)
+
+  drawHexGrid(p)
+  drawBoot(p)
+  drawRings(p, time, alert)
+  drawRadar(p, time, alert)
+  drawGlobe(p, time, alert)
+  drawTargetBrackets(p, time, alert)
+  drawBoot(p)
+  drawDataColumns(p, time, alert)
+  drawStatusBlock(p, time, alert)
+  drawSparkline(p, time, alert)
+  drawFrames(p, time, alert)
+  drawLockText(p, alert)
+  drawGlitches(p)
+  drawOverlays(time, alert)
+}
+
+window.renderAt = async function (t) { draw(t) }
+
+/* ------------------------------------------------------------ 适配视口 */
+const stage = document.getElementById('stage')
+function fit() {
+  const scale = Math.min(window.innerWidth / W, window.innerHeight / H)
+  stage.style.transform = 'translate(-50%, -50%) scale(' + scale.toFixed(4) + ')'
+}
+fit()
+window.addEventListener('resize', fit)
+draw(0)
+</script>
+</body>
+</html>

@@ -1,19 +1,21 @@
-﻿# Media Senses · 视听感知与仿制
+# Media Senses · 视听感知与仿制
 
 > 给**纯文本大模型**装上眼睛、耳朵和一台剪辑机：**看懂视频、听懂音乐、看见屏幕**，
 > 还能**批量学习一个品类的做法，然后自己仿制成片**。
 
 仓库：<https://github.com/Y1410226627/media-senses>
 
-一个 DeepSeek Harness（DSH）Host 插件，共 **13 个工具**，全部在本机用 ffmpeg + 本地 whisper 模型 +
+一个 DeepSeek Harness（DSH）Host 插件，共 **16 个工具**，全部在本机用 ffmpeg + 本地 whisper 模型 +
 Windows SAPI + headless 浏览器完成——**零 npm 依赖、零云 API、默认全程离线**。
 
 - **感知**：镜头/关键帧/亮度色相字符图、逐秒曲线、BPM/调性/和弦/曲式/响度/音色、语音转写、
   制作技法（运镜/转场/调色/卡点/钩子）
 - **学习与仿制**：批量语料 → 风格画像 + 仿制清单 → JSON 分镜 → 成片（转场/字幕/配乐/旁白/响度归一化）
-- **图像生成**：341 种代码动画风格 → headless Edge 逐帧渲成片段，拼进成片
+- **图像生成**：341 种单镜头代码动画风格 + 15 套整片 MG 视觉系统 → headless Edge 逐帧渲成片段，拼进成片
 - **看屏幕**：按变化量选帧（切点 + 运动积分），拼成 42px token 对齐的一张图
 - **视觉适配**：有视觉能力的模型自动切到「图为主」的呈现——去字符图、给格号索引、给观察任务、按需裁剪放大
+- **声音设计**：17 种程序化合成音效（不下载任何素材），按能量峰值对齐，卡点用拍号写
+- **验收闭环**：门禁六条腿 + 判例式审美准则 + 像素级比对 + 独立终检 + 可再编辑交付
 
 ---
 
@@ -121,7 +123,7 @@ plugin_manager(action="install_bundle", target="D:\\桌面\\装插件\\media-sen
 
 ---
 
-## 3. 工具集（14 个）
+## 3. 工具集（16 个）
 
 ### `media_probe` — 先看看这是什么文件
 
@@ -162,6 +164,11 @@ plugin_manager(action="install_bundle", target="D:\\桌面\\装插件\\media-sen
 
 产出：BPM/拍点/置信度、调性与候选、和弦进行表、曲式分段表、响度与动态、音色与频段、人声可能性、
 情绪倾向、能量曲线、波形/频谱/音级热力图。
+
+**卡点网格**（这一版的新增）：除了 BPM 标量，还会输出一份可直接复制进 RenderPlan.beatGrid 的
+网格——用最小二乘对拍序列拟合 	_i = t0 + i·T（不信 tempo 标量，实测它可能偏 2%+），
+再用「kick 是否主要落整数拍」消解 2x/0.5x 八度歧义，并给出残差（≤15 ms 才算机器鼓点）。
+报告里同时给拍→帧对照表和用法约定。
 
 ### `media_frame` — 放大看某一刻（或一张图片）
 
@@ -218,11 +225,42 @@ plugin_manager(action="install_bundle", target="D:\\桌面\\装插件\\media-sen
 | `verify` | boolean | 渲染后自动用同一套感知工具复核，默认 true |
 | `gate` | boolean | 渲染后跑验收门禁（见下节），默认 true |
 | `lint` | boolean | 渲染前做版式体检（文字出框/标题与字幕打架/字号过小），默认 true |
+| `aesthetic` | boolean | 渲染前按 27 条判例式审美准则审计计划，默认 true |
+| `timeline` | boolean | 额外导出可再编辑时间线（`.timeline.json` + 离线 `.timeline.html` 编辑器），默认 false |
 | `targets` | object | 对照目标（可直接用 `style-profile.json` 里的 `reproduction.targets`） |
 
 场景类型：`text`（中文字体/淡入/自动缩字号）、`image`（Ken Burns 推拉 / 四向平移）、`gradient`、
 `color`、`video`（任意 mp4 片段，含代码动画片段）；转场 20+ 种 xfade；`audio.music` + `audio.voiceover`
 （可以给文字让它用本机 TTS 念）；`loudnorm` 归一到目标 LUFS。成片**一定**有一条音频流。
+
+**音效轨**（`audio.sfx[]`，两种写法）：
+
+```json
+"sfx": [
+  { "kind": "impact", "beat": 16, "gain": 0.55 },
+  { "kind": "riser",  "beat": 23, "gain": 0.35 },
+  { "src": "D:/sfx/whoosh.wav", "at": 4.2, "peakLag": 0.398, "volumeDb": -6 }
+]
+```
+
+给 `kind` 就现场合成（17 种音色见 `media_sfx`），给 `src` 就用现成文件。位置可以写 `beat`（拍号）
+或 `at`（秒）。渲染器会自动做两项补偿：**扣掉音源的峰值滞后**（`peakLag`，不写就自己测）
+和**扣掉渲染管线的输出音轨偏移**（`plan.beatGrid.outputOffsetSeconds`，默认 0）。少扣任何一项，
+重音就会晚到——实测两项叠起来最重一击晚 0.27 s，听起来就是音画不同步。
+
+**卡点时间线**（`plan.beatGrid`）：
+
+```json
+"beatGrid": { "bpm": 131.97, "t0": 0.2244, "period": 0.45465, "outputOffsetSeconds": 0 }
+```
+
+给了它，门禁会多一条**卡点对齐腿**，逐切点量「离最近一拍差几帧」。实践约定是切点写拍号不写帧号
+（换曲只改 `beatGrid` 一处）。`outputOffsetSeconds` 不要预设常数——不同编码器差得多，
+渲一遍、抽音轨做归一化交叉相关量出真实值再填。
+
+**可再编辑交付**（`timeline: true`）：除 MP4 外再给两份东西——`.timeline.json`（轨道/片段/标记，
+能反解回 RenderPlan 重新渲染）和 `.timeline.html`（单文件、离线可开、内嵌 JSON 的编辑器，
+可以改文案/拖时长/调音量再导出）。真剪映工程导出需要 `pyJianYingDraft`，本轮没做。
 
 图片场景的运镜：`none`、`kenburns-in`、`kenburns-out`、`pan-left`、`pan-right`、`pan-up`、`pan-down`
 （`tilt-up` / `tilt-down` 与 `pan-up` / `pan-down` 等价，可以直接把 `media_watch_video` 测出来的
@@ -241,7 +279,7 @@ plugin_manager(action="install_bundle", target="D:\\桌面\\装插件\\media-sen
 
 ### 验收门禁：它像片，还是像 PPT
 
-每次渲染后（`gate: true`，默认开）多跑一道门禁，**只用像素与音频测量**，给五项带阈值的判定：
+每次渲染后（`gate: true`，默认开）多跑一道门禁，**只用像素与音频测量**，给六项带阈值的判定：
 
 | 项 | 判据 | 来源 |
 |----|------|------|
@@ -250,6 +288,10 @@ plugin_manager(action="install_bundle", target="D:\\桌面\\装插件\\media-sen
 | 变化爆发 | 1.5 s 内 ≥ 3 次大变化算一处爆发 | 全片均匀＝卡片翻页 |
 | 静止空档 | 连续 ≥ 3 s 无任何变化 = 未过 | 观众会以为卡住了 |
 | 音频动态 | 峰值 ≤ −3 dBFS、无削波、安静片段 ≥ 15% | 一直很响就听不出重点 |
+| 卡点对齐 | 每个切点离最近一拍 ≤ 3 帧 | 差 2–3 帧就听不出是跟着鼓的，合理的卡点会被读作无端抖动 |
+
+卡点腿在计划里没给 `beatGrid` 时是 **SKIP 而不是 PASS**：按内容节奏剪辑是一种正当选择，
+只是它不是卡点。这一条差别很重要——把「没测」当「测过且合格」是最容易骗过自己的地方。
 
 判定同时看两个指标：**平均差异**与**变动像素占比**。只看平均差异会把稀疏运动漏掉——一条慢慢画出来的
 线、一段缓慢的视差推镜，改动画面不到 2% 的像素，平均差异几乎为零，于是被误报成「完全没变化」。
@@ -286,6 +328,33 @@ plugin_manager(action="install_bundle", target="D:\\桌面\\装插件\\media-sen
 点名的禁用项。库里的提示词有三种排版（11 节的 Lemo 版、标题式的 mg 版、整段散文的 A-G/Z 版），
 解析器统一归一，没有分节的会明说「整段散文，只替换内容」。
 
+### 整片 MG 风格（`media_styles` 的 `source: "mg"`）
+
+341 个单镜头风格解决的是「这一个效果怎么动」；**整片风格**解决的是「十支镜头为什么像同一支片子」。
+15 套整片风格每套一次给全：配色（含每个颜色的角色）、字号层级、运动语汇与曲线倾向、质感/噪点处理，
+以及**禁忌清单**（这套风格绝对不要做什么）。
+
+| 编号 | 中文名 | 能量 | 族 |
+|---|---|---|---|
+| `flat-vector` | 扁平矢量 | medium | 扁平解释 |
+| `line-art` | 单线描画 | low | 手绘线条 |
+| `isometric` | 等轴 2.5D | medium | 等轴空间 |
+| `cel-boil` | 逐帧手绘·线条沸腾 | medium | 手工材质 |
+| `collage` | 拼贴剪报 | high | 手工材质 |
+| `liquid` | 液态流动 | high | 有机形变 |
+| `morph` | 形变叙事 | medium | 有机形变 |
+| `bauhaus` | 几何构成·包豪斯 | high | 几何构成 |
+| `synthwave` | 复古合成波·VHS | medium | 复古媒介 |
+| `aurora-glass` | 极光玻璃拟态 | low | 光与玻璃 |
+| `hanazi` | 综艺花字 | high | 综艺花字 |
+| `paperclip` | 回形针拼贴 | medium | 手工材质 |
+| `pixel` | 像素风 | medium | 复古媒介 |
+| `hud` | 科幻 HUD | high | 科技界面 |
+| `ink-wash` | 水墨写意 | low | 手绘线条 |
+
+用 `media_styles { source: "mg", action: "show", id: "hud" }` 拿到可直接喂给写 HTML 的模型的完整提示词；
+`assets/mgstyles/` 另有 3 个已能跑的模板（`flat-vector` / `isometric` / `hud`），实现 `window.renderAt(t)`、
+单文件内联、离线、确定性，可直接交给 `media_animate`。
 ### `media_moves` — 导演词典（说法 → 数字）
 
 | 参数 | 类型 | 说明 |
@@ -304,7 +373,7 @@ plugin_manager(action="install_bundle", target="D:\\桌面\\装插件\\media-sen
 - **8 套外观预设**：cinematic / anime-cel / pastel / claymation / papercut / synthwave-vhs / commercial / ink，每套给配色、材质、光位、后期与帧率/步进。
 - **15 条「一眼 AI 味」**：紫青渐变底、粒子汤、镜光滥用、每切必 RGB split、处处霓虹、回弹缓动、全片慢动作……每条给表现、为什么露馅、怎么改（带数值）。
 - **7 条剪辑缝规则**：切在动作最快处、两侧方向速度匹配、zoom 符号不变、主体位置差 ≤1/10 画幅、运动模糊帧内不许硬切。
-- **44 张镜头配方卡**：每张有意图、运动、**参数表（参数 | 典型值 | 往哪调会怎样）**、声音、常见坑、可运行配方。第三列是关键——它说「再大就散架」而不只是「4–6 帧」。
+- **168 张镜头配方卡**：每张有意图、运动、**参数表（参数 | 典型值 | 往哪调会怎样）**、声音、常见坑、可运行配方。第三列是关键——它说「再大就散架」而不只是「4–6 帧」。这一版从上游 video-shotcraft 的 124 张卡补齐了词汇广度与调校数值（Apache-2.0，见 [THIRD-PARTY](THIRD-PARTY.md)），文案与 schema 是本仓自己写的。
 - **时长预算**：这个时长最多画多少笔（起形+马克笔 3.9 笔/秒、按部位上色 6 笔/秒），以及五种体裁的常见时长区间。
 
 ### 可渲模板（`media_moves` 的 `templates` / `template`）
@@ -414,6 +483,7 @@ token 对齐的拼图**，并给出每帧时间、变化分与原因。Windows �
 | `include_metrics` | boolean | true | 是否跑逐项数值对比 |
 | `include_continuity` | boolean | true | 是否判定镜头承接（像不像 PPT） |
 | `rubric` | boolean | false | 是否附 7 维评分卡空白表供自评 |
+| `pixel` | boolean | true | 同一时刻的像素级比对（PSNR/SSIM/CIEDE2000 + 九宫格最差块） |
 
 会分析两边、给出 11 项差异（时长/镜头数/平均镜头长/切点率/亮度/彩度/BPM/调性/硬切占比/卡点率/调色）
 与总体判定（一致/接近/部分一致/偏差大），并把对比图交给视觉模型判断。**这是仿制闭环的验收步骤**。
@@ -428,6 +498,46 @@ token 对齐的拼图**，并给出每帧时间、变化分与原因。Windows �
 - **评分卡**（`rubric: true`）：7 维（风格还原度/内容与叙事/运动质量/排版与版式/完成度与质感/声音与卡点/技术正确性），
   每维 1–10 分并给锚点。评分**强制要求证据**：每条必须带时间码或帧号、且改法里必须有数字，否则整份评分被拒——
   「整体不错」这种无证据评价进不来。
+- **像素级比对**（`pixel: true`，默认开）：取同一时刻的**无损 PNG 帧**（不走 JPEG 关键帧，避免压缩振铃被当成差异），
+  按面积平均缩到共同尺寸后逐块比对，给出 MAE / RMSE / PSNR / SSIM / ΔE00 与三档判定
+  （一致：PSNR≥28 且 SSIM≥0.92 且 ΔE00≤3；接近：PSNR≥22 且 SSIM≥0.80 且 ΔE00≤8），
+  并列出最差区块的**方位词**（「右侧中间」「右下角」）而不是裸坐标。数值对比回答「差多少」，
+  这一项回答「**哪里**差」——改的时候按区块改，就不是在改「整体感觉」。
+
+### `media_sfx` — 程序化音效（离线、确定性、零依赖）
+
+| 参数 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `action` | string | `list` | `list` 看调色板 / `render` 合成一条并导出 wav / `sequence` 规划连发 |
+| `kind` | string | — | 音色名（`render` 时必填） |
+| `params` / `seed` | object / integer | — | 音色参数与随机种子（同种子出同一段音频） |
+| `sequence` | object | — | `{count, kinds, volumeLadder, interval}` 连发规格 |
+| `output_path` / `peak_db` | string / number | — / −1 | 输出路径与峰值归一化目标 |
+
+17 种音色：电影系五词 `whoosh`（运镜）/ `impact`（落地）/ `riser`（铺垫）/ `sparkle`（光效）/
+`swoosh`（转场），加拟音 `click` `switch` `paper` `key` `pop` `shutter` `glass` `grain`
+`sub-drop` `shimmer` `reverse-swell` `glitch`。
+
+**为什么不是下载素材而是合成**：合成的东西可离线、可复现、无署名负担，而且能给出一个下载素材给不了的数字——
+**能量峰值相对文件头的位置**。实测 17 种里有 12 种的峰值不在文件头：`riser` 在 99% 处、`reverse-swell` 99%、
+`sparkle` 59%、`whoosh` 44%、`glitch` 64%。按文件头对齐会让这些声音**晚到**，正确做法是
+「起始时刻 = 目标峰值时刻 − 峰值滞后」。渲染器拿到 `kind` 时会自动做这件事。
+
+### `media_review` — 独立终检
+
+| 参数 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `path` | string | 必填 | 要审查的成片 |
+| `reference` | string | — | 参考片；给了就做承接对比 |
+| `plan_path` / `plan` | string / object | — | 当初的 RenderPlan；给了才能核对计划与成片是否一致、跑卡点回测 |
+| `mode` | string | auto | `blind` 去掉主观形容词，只留判定/数字/帧号 |
+
+把验收门禁（六条腿）、镜头承接、判例式审美准则、卡点回测、音频指标汇总成 **A 音画 / B 节奏 /
+C 画面 / D 数据安全 / E 一致性** 五节报告。两条硬规则：
+
+- **每条结论必须带帧号或秒**；拿不出时间证据的问题会从「阻塞项」降级为「提醒」并标注缺证据。
+- 报告头固定写「本报告由独立审计生成，制作者的自检不作为证据」——制作者对自己的产出有确认偏差，
+  首检不能交给用户，也不能交给制作者自己。
 
 ## 4. 配置
 
@@ -560,6 +670,42 @@ media-senses/
    没有 `yt-dlp` 支持的站点，请自行准备文件后交给 `media_corpus` 的目录模式。
 10. 仿制的本质是「统计规律 + 模板填槽」：它能复刻节奏、画幅、调色倾向、卡点、包装方式，
     但**不会凭空生成实拍素材**——画面素材仍需你提供，或用 `media_animate` 生成图形动画。
+11. **音效是合成出来的，不是采样库**。17 种音色覆盖电影系五词与常见拟音，能离线、可复现、
+    无署名负担；但它不会等于真实录音的质感。要出版级拟音，请自备素材走 `audio.sfx[].src`。
+12. **鼓件三分类在本混音里有边界**：同一瞬间叠在一起的 kick+hihat 只能报一个类别（报最强的）；
+    比 kick 低 16 dB 以上的 hihat 可能检不出来；同一击的起音峰与打击面峰相隔远时会各报一次
+    （snare 计数可能翻倍）。用于「哪一拍是重音」足够，做逐鼓件精确转录不够。
+13. **卡点回测的 3 帧门槛是 30fps 下的感知阈值**。要更高精度就升帧率，不要靠调阈值假装更准。
+14. **判例式审美准则 27 条里只有 11 条能机器判定**。另外 16 条需要人/视觉判断，报告里明确标
+    `skip` 并说明缺什么数据——**跳过永远不算通过**。这是刻意的：把主观意见洗成测量值，
+    比不做检查更危险。
+15. **`media_review` 只能保证「引擎说了什么就按证据规则判定」**，不能替引擎发现它自己没测到的
+    东西。所以它必须放在**独立调用**里，不要把制作过程的辩解喂给它。
+
+---
+
+## 6.1 这一版到底补上了什么（对用户质疑的回应）
+
+上一版交付时说过「能完美复刻」。**那是错的。** 对照上游 video-shotcraft 逐项审计后，9 项能力里
+有 6 项完全缺失——最要命的是**根本没有音效引擎**（上游的片子是 riser→impact→sparkle，
+我们的片子除了 BGM 和旁白是哑的）。这一版补的是这 6 项：
+
+| # | 能力 | 上一版 | 现在 | 验证 |
+|---|------|--------|------|------|
+| 1 | 音效/声音设计 | 只有镜头卡里的文字建议 | 17 音色程序化合成 + 峰值滞后对齐 + 连发防机枪 | `test/sfx.test.mjs` 41 项、`test/audio-chain.test.mjs` 端到端 |
+| 2 | 卡点闭环 | 只有 BPM 标量 | 最小二乘网格拟合 + 2x/0.5x 消歧 + 鼓件三分类 + 渲后回测 ≤3f + 输出偏移实测 | `test/beatsync.test.mjs` 22 项 |
+| 3 | 镜头卡库 | 44 张，仅参数 | **168 张**，含上游调校参数与「已知坑」 | `test/shots-lint.test.mjs` 39 项 |
+| 4 | 判例式审美准则 | 无 | 27 条判例（R/Q/S/C/P），11 条可机器判定 | `test/aesthetic.test.mjs` 18 项 |
+| 5 | 独立终检 | rubric 自评 | 五节报告 + 帧号证据强制 + 无证据降级 | `test/review.test.mjs` 33 项 |
+| 6 | 像素级比对 | 数值 + 并排图 | PSNR/SSIM/CIEDE2000 + 九宫格方位 | `test/pixelqa.test.mjs` 33 项 |
+| 7 | 可再编辑交付 | 死 MP4 | 时间线 JSON 无损往返 + 离线 HTML 编辑器 | `test/timeline.test.mjs` 30 项 |
+| 8 | 整片 MG 风格 | 341 个单镜头风格 | 再加 15 套整片视觉系统 + 3 个可运行模板 | `test/mgstyles.test.mjs` 12 项 |
+| 9 | 真实页面 2.5D | 只有屏幕截图 | 全页 2x + hero 4x 抠图 + layout.json + CSS zoom 换算 | `test/pagecapture.test.mjs` 20 项 |
+
+**仍然不能做到的**（诚实边界）：不生成实拍素材；不替代真实拟音采样库；不保证任意参考片都能
+逐像素复刻（复刻的是节奏、画幅、调色、卡点、包装方式与声音句式）；审美准则里 16 条仍靠判断。
+「完美复刻」不是一个可以宣告达成的状态——它是一个每轮都要重新审计的方向，`test/capability.test.mjs`
+的 36 条能力行就是防止它悄悄退回原样的那个闸门。
 
 ---
 
@@ -619,6 +765,26 @@ media-senses/
 [THIRD-PARTY.md](THIRD-PARTY.md) 第 2.3 节。
 
 *若发现任何段落与上游文本雷同，属疏漏，请提 issue，我们会立即改写并补署名。*
+
+### 7.3 第三批：dsh-drawai 及其上游（v0.7）
+
+[dsh-drawai](https://github.com/fourzkw/dsh-drawai)（MIT，901★）是 DSH 侧栏里的可编辑画布插件。
+它自己做的事和本项目不同（它做画布编辑与改图），但它 vendor 的上游素材库直接暴露了我们的短板，
+于是逐个补齐——**补的不是代码，是质量闭环**。
+
+| 来源 | 取了什么 | 落到哪 |
+|------|---------|--------|
+| video-shotcraft（Apache-2.0，经 dsh-drawai 固定提交 `1266a3e`） | 124 张镜头配方卡的**参数数值与「已知坑」** | `lib/shots.js`（44 → 168 张） |
+| 同上 | 拍网格最小二乘拟合、2x/0.5x 消歧、鼓件三分类、渲后回测 ≤3f、输出音轨偏移实测这些**方法论** | `lib/beatsync.js` |
+| 同上 | 27 条**判例式**审美准则（每条带用户原话与返工经过） | `lib/aesthetic.js` |
+| 同上 | 「制作者自检不作为证据」的独立终检结构 | `lib/review.js` |
+| 同上 | 全页 2x 截图 + hero 4x 抠图 + `Tx = 960/zoom − cx` 的 2.5D 换算 | `lib/pagecapture.js` |
+| mg-styles-15（经 dsh-drawai 固定提交 `49052d80`） | 15 套**整片** MG 风格的运动语汇与配色方向 | `lib/mgstyles.js` + `assets/mgstyles/` 3 个模板 |
+
+**没取的**：Remotion（个人免费、公司可能要付费）一行没引入，demo 的 TSX 源码没复制；
+mg-styles-15 的纹理/字体/图片**一个文件都没转存**（上游部分素材未逐项列明许可）。
+所以本仓依然零 npm 依赖，18 套 MG 风格提示词与 3 个模板都是自己写的。
+
 ---
 
 ## 8. 真实素材演示
@@ -716,6 +882,7 @@ node demo/run-demo.mjs          # 单条感知（01–05 号报告）
 ## 9. 验证
 
 ```text
+node test/run-all.mjs            # 一次跑完全部 31 个套件，打印每套真实通过项数与总计
 node test/shell-smoke.mjs        # 外壳：二进制探测、ffprobe、单帧分析、PNG、whisper 转写      9 项
 node test/audio-engine.test.mjs  # 音频引擎（120BPM / C大调 合成夹具，23 DSP + 32 集成）       55 项
 node test/video-engine.test.mjs  # 视频引擎（3 场景 合成夹具 + 退化用例）                      23 项
@@ -728,9 +895,9 @@ node test/htmlrender.test.mjs    # 代码动画渲染：CDP、确定性、源码
 node test/anim-runtime.test.mjs  # 运行时平权：CSS/WAAPI seek、声明式时间轴、运动模糊、页内音频  20 项
 node test/templates.test.mjs     # 10 个模板逐个真渲一遍，断言帧在动、参数生效                25 项
 node test/adapters-performance.test.mjs # Lottie/Three/Anime/自研适配器 + 角色表演规则          29 项
-node test/capability.test.mjs    # 目标能力审计：26 项能力逐条核对实现与测试                  26 项
+node test/capability.test.mjs    # 目标能力审计：36 项能力逐条核对实现与测试                  36 项
 node test/attribution.test.mjs   # 署名完整性：18 个仓库各出现一次、许可红线、落地路径存在      11 项
-node test/gate.test.mjs          # 验收门禁：节奏/静帧/爆发/空档/音频五条腿 + 稀疏运动            16 项
+node test/gate.test.mjs          # 验收门禁：节奏/静帧/爆发/空档/音频/卡点六条腿              22 项
 node test/styles-guidance.test.mjs # 风格提示词分节：不可改/可替换/禁用项（含真实库）         13 项
 node test/vocabulary.test.mjs    # 词汇库：12 曲线 + 弹簧、18 运镜、9 转场、8 外观、15 反模式    30 项
 node test/shots-lint.test.mjs    # 镜头卡库、版式体检、评分卡（含无证据拒绝）                 39 项
@@ -741,7 +908,16 @@ node test/vision.test.mjs        # 视觉适配：能力探测、图片预算、
 node test/montage.test.mjs       # 时间条/对比图拼装与参考 vs 成片差异度量                    19 项
 node test/vision-render.test.mjs # blind/vision 双模式报告（含 blind 逐字节回归）              31 项
 node test/e2e-v2.mjs             # 全链路：学→取风格→造画面→合成→回测→看屏幕                16 项
-                                   —— 合计 558 项断言，全部通过
+node test/sfx.test.mjs            # 程序化音效：17 音色、确定性、峰值滞后、连发调度           41 项
+node test/beatsync.test.mjs       # 卡点：网格拟合、八度消歧、鼓件分类、回测、输出偏移          22 项
+node test/aesthetic.test.mjs      # 判例审美准则 27 条（11 条可判定），逐条正反用例               18 项
+node test/review.test.mjs         # 独立终检：五节、证据规则、无证据降级、blind 去形容词          33 项
+node test/pixelqa.test.mjs        # 像素比对：PSNR/SSIM/CIEDE2000、跨分辨率、九宫格               33 项
+node test/timeline.test.mjs       # 可再编辑交付：时间线往返、离线 HTML、diff                     30 项
+node test/mgstyles.test.mjs       # 整片 MG 风格 15 套 + 3 个模板（renderAt 契约）               12 项
+node test/pagecapture.test.mjs    # 真实页面 2.5D：全页 2x、hero 4x、layout.json、CSS zoom       20 项
+node test/audio-chain.test.mjs    # 端到端：音效进混音 + 卡点对齐腿（真渲两支片子对比）             9 项
+                                   —— 合计 756 项断言，31 个套件，全部通过
 ```
 
 夹具是**合成**的，因此有 ground truth 可比：音频夹具是 120 BPM、C 大调、4/4、24 秒的鼓+贝斯+旋律

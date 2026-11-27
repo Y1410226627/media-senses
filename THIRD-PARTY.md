@@ -113,6 +113,37 @@
 
 ---
 
+## 2.4 2026-11 第三批：dsh-drawai 及其上游（第 7 轮）
+
+[dsh-drawai](https://github.com/fourzkw/dsh-drawai)（MIT）是一个 DSH 画布插件，它 vendor 了
+§2.1 已入册的第 5 行 video-shotcraft（Apache-2.0，固定提交
+`1266a3ec4831289c4d893d42dd5102723658039a`）以及第 2 行的整片 MG 风格库
+（固定提交 `49052d80`）。第 7 轮从这一批里补的是**质量闭环**：声音设计、卡点回测、像素比对、
+独立终检、可再编辑交付。
+
+| 模块 | 上游 | 许可 | 吸收方式 |
+|---|---|---|---|
+| `lib/sfx.js` | 无上游 | — | 纯自写 DSP（噪声整形、RBJ 双二阶滤波、加法合成、颗粒/门限调度），无第三方代码、参数表或素材 |
+| `lib/beatsync.js` | video-shotcraft（经 dsh-drawai 固定提交 1266a3e） | Apache-2.0 | 方法论：最小二乘拍网格拟合、2x/0.5x 消歧、鼓件三分类、渲后回测 ≤3f、输出音轨偏移交叉相关实测；实现与阈值管线为本仓自写 |
+| `lib/shots.js`（44 → 168 张） | 同上 | Apache-2.0 | 词汇表、参数数值与「已知坑」忠实保留；schema、中文文案与措辞为本仓自写。上游 124 张卡 + 本仓原 44 张 |
+| `lib/aesthetic.js` | 同上 | Apache-2.0 | 27 条判例式准则的规则文本与判例索引；检查器实现、阈值管线与中文文案为本仓自写 |
+| `lib/review.js` | 同上 | Apache-2.0 | 五节结构与「制作者自检不作为证据」立场；判定规则、打分与中文文案为本仓自写 |
+| `lib/mgstyles.js` + `assets/mgstyles/` | mg-styles-15（经 dsh-drawai 固定提交 49052d80） | 上游 README 声明为素材整理项目，**提示词与文档部分未逐项列明许可** | 只取 15 套风格的**运动语汇、配色结构与禁忌方向**，中文提示词与 3 个可运行 HTML 模板均为本仓自写；**未转存上游任何图片、纹理、字体或视频** |
+| `lib/pagecapture.js` | video-shotcraft | Apache-2.0 | 方法论：全页 2x 截图 + hero 4x 元素级抠图 + layout.json 坐标/样式 token + CSS `zoom` 2.5D 放大与 `Tx = 960/zoom − cx` 换算；代码为本仓自写，浏览器发现复用 `lib/htmlrender.js` |
+| `lib/pixelqa.js` | 无上游吸收 | — | PSNR / SSIM / CIEDE2000 为公开标准公式自写；`dsh-drawai/src/motion/pixelqa.js` 经审阅是色带/抗锯齿/字体检查，与配对帧比对是不同问题，未取 |
+| `lib/timeline.js` | 无上游吸收 | — | 自写的 RenderPlan ↔ 时间线往返与离线 HTML 编辑器；真剪映工程导出需 `pyJianYingDraft`，本轮未做 |
+
+**许可红线（第 7 轮新增）**
+
+| 项目 | 约束 | 我们怎么做的 |
+|---|---|---|
+| video-shotcraft | Apache-2.0，**依赖 Remotion**（个人免费、公司可能需付费） | 未引入 Remotion、未复制 demo 的 TSX 源码；只吸收 Apache-2.0 允许的方法论与参数数值，并在此处署名 |
+| mg-styles-15 | 上游部分纹理「未逐项列明作者与许可」 | **未转存任何素材文件**；只取运动/配色方向，写出本仓自己的提示词与模板 |
+| dsh-drawai 自身 | MIT | 只读其架构与文档，未取代码；本项目与它是不同定位（它做画布编辑，本项目做感知与复刻） |
+| 上游字体与音乐 | 各自独立许可 | 未打包；运行时只用本机系统字体与本机 ffmpeg / TTS |
+
+---
+
 ## 3. 运行期依赖（不随本仓库分发）
 
 本插件本身**零 npm 依赖**，但以下东西在运行时由本机提供或被渲染页面自行加载：

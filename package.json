@@ -1,6 +1,6 @@
 {
   "name": "@local/media-senses",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "license": "MIT",
   "repository": {
@@ -11,7 +11,7 @@
   "bugs": {
     "url": "https://github.com/Y1410226627/media-senses/issues"
   },
-  "description": "Perception, reproduction and screen vision for LLM agents: watch videos and images (blind or vision-targeted reports), listen to music, learn a genre from a corpus, build similar videos with ffmpeg + local TTS + headless-browser code animations, and compare a replica against its reference.",
+  "description": "Perception, reproduction and quality assurance for LLM agents: watch videos and images (blind or vision-targeted reports), listen to music with a beat grid you can cut to, learn a genre from a corpus, synthesise sound effects and build videos with ffmpeg + local TTS + headless-browser code animations, then prove the result against the reference (acceptance gate, aesthetic rules, pixel QA, independent review).",
   "type": "module",
   "main": "index.js",
   "exports": {
@@ -24,11 +24,15 @@
     "index.js",
     "lib/*.js",
     "bin/*",
+    "assets/templates/*.html",
+    "assets/mgstyles/*.html",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
     "README.md",
-    "THIRD-PARTY.md"
+    "THIRD-PARTY.md",
+    "CONTRACT*.md",
+    "LICENSE"
   ],
   "engines": {
     "node": ">=20"

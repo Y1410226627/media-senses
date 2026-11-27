@@ -34,7 +34,7 @@ import { ingestUrls } from './lib/ingest.js'
 import { buildStyleProfile } from './lib/profile.js'
 import { artifactDir, formatBytes, formatTimecode, makeWorkDir, probe, removeWorkDir, resolveTools, run, summariseProbe } from './lib/ffmpeg.js'
 import { renderAudioReport, renderFrameReport, renderProbeReport, renderVideoReport, tidy } from './lib/render.js'
-import { renderAnimateReport, renderBuildReport, renderChangeSection, renderCorpusReport, renderCraftSection, renderSeeReport, renderStylesReport, renderTtsReport, renderVocabularyReport } from './lib/render-v2.js'
+import { renderAnimateReport, renderBeatGridSection, renderBuildReport, renderChangeSection, renderCorpusReport, renderCraftSection, renderMgStylesReport, renderPixelQaSection, renderSeeReport, renderSfxReport, renderStylesReport, renderTtsReport, renderVocabularyReport } from './lib/render-v2.js'
 import { getStyle, resolveSkillDir, searchStyles, seriesOverview, starterPath } from './lib/styles.js'
 import { attachImages, detectVision, profileWidth, sampleTimes, VISION_PROFILES } from './lib/vision.js'
 import { renderCompareReport, renderFramesReport } from './lib/render-vision.js'
@@ -129,6 +129,135 @@ function isImageLike(summary) {
   if (IMAGE_FORMAT.test(String(summary.formatName ?? ''))) return true
   const streams = Array.isArray(summary.video) ? summary.video : []
   return streams.length > 0 && (summary.duration === 0 || streams[0].fps === 0)
+}
+
+/**
+ * Synthesize the sound effects a plan asks for by name.
+ *
+ * The plan format accepts either a file (`src`) or a palette name (`kind`):
+ * `{kind:'impact', beat:16, gain:0.5}`. Writing the WAVs here rather than inside
+ * build.js keeps the assembly stage a pure ffmpeg job — it only ever sees paths —
+ * and it lets the measured peak lag travel with each effect, so a hit whose
+ * energy peak sits 80 ms into the file still lands on the beat.
+ *
+ * Returns human-readable notes; a plan that only uses `src` produces none.
+ */
+async function synthesisePlannedSfx(plan, workDir) {
+  const notes = []
+  const entries = Array.isArray(plan?.audio?.sfx) ? plan.audio.sfx : []
+  const wanted = entries.filter(
+    (entry) => entry !== null && typeof entry === 'object' && typeof entry.kind === 'string' && entry.kind.trim().length > 0,
+  )
+  if (wanted.length === 0) return notes
+  let sfx
+  try {
+    sfx = await import('./lib/sfx.js')
+  } catch (error) {
+    notes.push(`音效引擎不可用，按名字点播的音效被忽略：${error instanceof Error ? error.message : String(error)}`)
+    return notes
+  }
+  const dir = join(workDir, 'sfx')
+  await mkdir(dir, { recursive: true })
+  const summary = []
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index]
+    if (entry === null || typeof entry !== 'object') continue
+    if (typeof entry.src === 'string' && entry.src.trim().length > 0) continue
+    if (typeof entry.kind !== 'string' || entry.kind.trim().length === 0) continue
+    const kind = entry.kind.trim()
+    try {
+      // Seeding from the index keeps two entries of the same kind from being
+      // byte-identical, which is what makes a rapid-fire sequence sound like
+      // separate hits instead of a stutter.
+      const rendered = sfx.synthesizeSfx(kind, { ...(isPlainObject(entry.params) ? entry.params : {}), seed: entry.seed ?? index + 1 })
+      const target = join(dir, `sfx-${String(index).padStart(3, '0')}-${kind}.wav`)
+      const written = await sfx.writeSfxWav(target, rendered.samples, rendered.sampleRate, { peakDb: entry.peakDb })
+      entry.src = written.path
+      if (entry.peakLag === undefined && entry.peakLagSeconds === undefined) {
+        const lag = sfx.measureSfxPeakLag(rendered.samples, rendered.sampleRate)
+        // Convert to seconds here: build.js expects `peakLag` in seconds.
+        entry.peakLag = lag.peakSeconds
+      }
+      const beatValue = Number(entry.beat ?? entry.atBeat)
+      const secondsValue = Number(entry.at ?? entry.atSeconds ?? entry.start)
+      const where = Number.isFinite(beatValue)
+        ? `第 ${beatValue} 拍`
+        : `${Number.isFinite(secondsValue) ? secondsValue.toFixed(2) : '0.00'}s`
+      summary.push(`${kind}（${Math.round(written.duration * 1000)}ms，钉在${where}）`)
+    } catch (error) {
+      notes.push(`音效 #${index}（${kind}）合成失败，已跳过：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+  if (summary.length > 0) notes.push(`已合成 ${summary.length} 条音效：${summary.join('、')}`)
+  return notes
+}
+
+/**
+ * Project a RenderPlan onto the aesthetic auditor's input shape.
+ *
+ * The audit belongs *before* the render: shot timing, caption blocks, effect
+ * counts and SFX anchors all exist in the plan, and most of them cannot be
+ * recovered from finished pixels. That ordering is also what lets a failure be
+ * fixed for free instead of after a re-render.
+ *
+ * Every field is optional by contract, so anything the plan does not carry is
+ * simply omitted and the affected rule reports itself as skipped.
+ */
+function aestheticInputFromPlan(plan) {
+  const fps = Number.isFinite(plan?.fps) && plan.fps > 0 ? plan.fps : 30
+  const scenes = Array.isArray(plan?.scenes) ? plan.scenes : []
+  let cursorSeconds = 0
+  const shots = []
+  const cuts = []
+  for (let index = 0; index < scenes.length; index += 1) {
+    const scene = scenes[index]
+    const duration = Number(scene?.duration) || 0
+    const hold = Number(scene?.hold) || 0
+    const startFrame = Math.round(cursorSeconds * fps)
+    const endFrame = Math.round((cursorSeconds + duration + hold) * fps)
+    shots.push({
+      id: `s${index + 1}`,
+      durationSeconds: duration + hold,
+      startSeconds: cursorSeconds,
+      startFrame,
+      endFrame,
+      isBrandMark: scene?.brandMark === true,
+      hasHoldSeconds: hold,
+      glintCount: Number.isFinite(Number(scene?.glintCount)) ? Number(scene.glintCount) : undefined,
+    })
+    cuts.push({
+      fromFrame: startFrame,
+      toFrame: endFrame,
+      techniqueId: typeof scene?.technique === 'string' ? scene.technique : (scene?.type ?? 'unknown'),
+      materialId: typeof scene?.src === 'string' ? scene.src : undefined,
+      isProtagonist: scene?.protagonist === true,
+    })
+    cursorSeconds += duration + hold
+  }
+  const grid = plan?.beatGrid
+  const beatPeriod = Number.isFinite(Number(grid?.period)) ? Number(grid.period) : undefined
+  const beatT0 = Number.isFinite(Number(grid?.t0)) ? Number(grid.t0) : 0
+  const sfxEntries = Array.isArray(plan?.audio?.sfx) ? plan.audio.sfx : []
+  const sfxAnchors = []
+  for (const entry of sfxEntries) {
+    if (entry === null || typeof entry !== 'object') continue
+    const beat = Number(entry.beat)
+    let targetSeconds = Number(entry.at ?? entry.atSeconds)
+    if (Number.isFinite(beat) && beatPeriod !== undefined) targetSeconds = beatT0 + beat * beatPeriod
+    if (!Number.isFinite(targetSeconds)) continue
+    sfxAnchors.push({ designedFrame: Math.round(targetSeconds * fps) })
+  }
+  return {
+    shots,
+    timeline: { cuts, totalSeconds: cursorSeconds },
+    captions: Array.isArray(plan?.captions) ? plan.captions : undefined,
+    effects: isPlainObject(plan?.effects) ? plan.effects : undefined,
+    audio: {
+      sfxAnchors: sfxAnchors.length > 0 ? sfxAnchors : undefined,
+      bpm: Number.isFinite(Number(grid?.bpm)) ? Number(grid.bpm) : undefined,
+      beatSeconds: beatPeriod,
+    },
+  }
 }
 
 /** Merge transcript information into an analysis and collect notes for the report. */
@@ -548,6 +677,41 @@ export function apply(ctx, rawConfig) {
         }
         mergeTranscript(analysis, transcript, notes)
 
+        // Beat grid: least-squares fit over the detected beat sequence, then the
+        // 2x/0.5x octave ambiguity resolved against the transients. This is the
+        // entry point for a beat-locked plan — the model copies `plan.beatGrid`
+        // and writes every cut in beat numbers instead of frame numbers.
+        let beatGrid = null
+        try {
+          const { fitBeatGrid, acceptBeatGrid } = await import('./lib/beatsync.js')
+          const beatTimes = Array.isArray(analysis.tempo?.beatTimes) ? analysis.tempo.beatTimes : []
+          if (beatTimes.length >= 8) {
+            const fitted = fitBeatGrid(beatTimes)
+            if (Number.isFinite(fitted.period) && fitted.period > 0) {
+              const scaled = (factor) => ({ ...fitted, bpm: fitted.bpm * factor, period: fitted.period / factor })
+              const resolved = acceptBeatGrid([scaled(0.5), scaled(1), scaled(2)], beatTimes)
+              const winner = resolved.winner ?? fitted
+              const segmentStart = Number(analysis.analyzed?.start ?? 0)
+              beatGrid = {
+                bpm: winner.bpm,
+                // The fit is relative to the analysed window; shift into file time
+                // so the grid stays valid for a plan that starts at file second 0.
+                t0: Number(winner.t0) + (Number.isFinite(segmentStart) ? segmentStart : 0),
+                period: winner.period,
+                count: winner.count ?? fitted.count,
+                residualMaxMs: fitted.residualMaxMs,
+                residualRmsMs: fitted.residualRmsMs,
+                pass: fitted.pass === true,
+                reasonZh: resolved.reasonZh,
+                candidates: resolved.scores ?? [],
+                segmentStartSeconds: Number.isFinite(segmentStart) ? segmentStart : 0,
+              }
+            }
+          }
+        } catch (error) {
+          notes.push(`卡点网格不可用：${error instanceof Error ? error.message : String(error)}`)
+        }
+
         const vision = await visionFor(exec, args)
         const target = targetOf(vision)
         const imagePlan = target === 'vision'
@@ -556,7 +720,8 @@ export function apply(ctx, rawConfig) {
               ...(analysis.artifacts?.waveform ? [{ kind: 'waveform', caption: '波形图：整体响度包络与段落能量变化' }] : []),
             ]
           : []
-        const report = renderAudioReport(analysis, { file: input.path, detail: detailOf(args), transcript: transcript?.text ?? null, asrNotes: notes, target, imagePlan })
+        let report = renderAudioReport(analysis, { file: input.path, detail: detailOf(args), transcript: transcript?.text ?? null, asrNotes: notes, target, imagePlan })
+        if (beatGrid !== null) report = `${report}\n\n${renderBeatGridSection(beatGrid, { fps: 30 })}`
         const attached = await attachFor(exec, [
           { path: analysis.artifacts?.spectrogram, name: 'media-senses-spectrogram.png', kind: 'spectrogram' },
           { path: analysis.artifacts?.waveform, name: 'media-senses-waveform.png', kind: 'waveform' },
@@ -568,6 +733,7 @@ export function apply(ctx, rawConfig) {
           file: input.path,
           duration_seconds: Math.round(Number(analysis.duration ?? 0) * 100) / 100,
           bpm: analysis.tempo?.bpm ?? null,
+          beat_grid: beatGrid,
           key: analysis.key?.name ?? null,
           sections: analysis.sections?.length ?? 0,
           artifacts: analysis.artifacts ?? {},
@@ -883,10 +1049,13 @@ export function apply(ctx, rawConfig) {
     name: 'media_build_video',
     description:
       '按 JSON 渲染计划（RenderPlan）合成一支视频：文字卡（中文字体/淡入）、图片 Ken Burns 推拉、渐变/纯色场景、' +
-      'xfade 转场、烧字幕、背景音乐、旁白（可直接给文字让它用本地 TTS 念）、EBU R128 响度归一化。这是「仿制」的执行器。\n' +
+      'xfade 转场、烧字幕、背景音乐、旁白（可直接给文字让它用本地 TTS 念）、**音效轨**（可直接给音色名让它合成，' +
+      '并按「峰值落点」对齐而不是按文件头对齐）、**卡点时间线**（切点写拍号，门禁回测实际偏差）、EBU R128 响度归一化。这是「仿制」的执行器。\n' +
       'Render a finished MP4 from a JSON RenderPlan: text cards (Chinese fonts, fade-in), Ken Burns image moves, gradient/colour ' +
-      'scenes, xfade transitions, burned captions, music bed, narration (either audio files or plain text synthesized locally) and ' +
-      'EBU R128 loudness normalisation. This is the tool that actually produces the video when you are reproducing a style.',
+      'scenes, xfade transitions, burned captions, music bed, narration (either audio files or plain text synthesized locally), ' +
+      'a sound-effect track (synthesised by palette name and aligned by energy peak, not by file head), beat-locked timing ' +
+      '(cuts written in beat numbers, verified by a post-render gate leg) and EBU R128 loudness normalisation. This is the tool ' +
+      'that actually produces the video when you are reproducing a style.',
     parameters: {
       type: 'object',
       additionalProperties: false,
@@ -895,8 +1064,10 @@ export function apply(ctx, rawConfig) {
         plan_path: { type: 'string', description: '或者给一个包含 RenderPlan 的 JSON 文件路径。' },
         output: { type: 'string', description: '覆盖计划里的输出路径（建议绝对路径）。' },
         verify: { type: 'boolean', description: '渲染后自动用 media_watch_video 的同一套分析复核成片，默认 true。' },
-        gate: { type: 'boolean', description: '渲染后跑验收门禁（节奏/静帧/爆发/空档/音频动态五项判定），默认 true，随 verify 一起跑。' },
+        gate: { type: 'boolean', description: '渲染后跑验收门禁（节奏/静帧/爆发/空档/音频动态/卡点对齐六项判定），默认 true，随 verify 一起跑。计划里给了 beatGrid 时卡点对齐腿才会启用。' },
         lint: { type: 'boolean', description: '渲染前做版式体检（文字出框/标题与字幕打架/字号过小），默认 true。' },
+        aesthetic: { type: 'boolean', description: '渲染前按判例式审美准则审计计划（节奏/质感/声音/文案/流程 27 条，其中 11 条可机器判定；失败项带帧号），默认 true。' },
+        timeline: { type: 'boolean', description: '额外导出可再编辑的时间线（.timeline.json + 自包含 .timeline.html 编辑器，可改文案/时长/音量后导出新 JSON 再渲），默认 false。' },
         targets: { type: 'object', description: '可选的对照目标（如 style-profile.json 里的 reproduction.targets），用于报告里对比差距。' },
       },
     },
@@ -939,15 +1110,63 @@ export function apply(ctx, rawConfig) {
         }
       }
 
+      // Aesthetic audit on the plan itself. Every rule that can be machine-checked
+      // from structured production data (shot timing, caption blocks, effect
+      // counts, SFX anchors) is checked here, so a failure is caught before the
+      // render rather than after it.
+      let aesthetic = null
+      const aestheticNotes = []
+      if (args.aesthetic !== false) {
+        try {
+          const { auditAesthetic } = await import('./lib/aesthetic.js')
+          aesthetic = auditAesthetic(aestheticInputFromPlan(plan))
+        } catch (error) {
+          aestheticNotes.push(`审美准则审计未跑：${error instanceof Error ? error.message : String(error)}`)
+        }
+      }
+
       const { buildVideo } = await import('./lib/build.js')
       const workDir = await makeWorkDir('media-senses-build')
       const startedAt = Date.now()
       try {
-        const result = await buildVideo({ tools: resolved, plan, workDir, signal: exec?.signal })
+        // A plan may name a sound effect instead of pointing at a file:
+        // `{kind:'impact', beat:16, gain:0.5}`. Synthesize those into the working
+        // directory now so the plan that reaches buildVideo has real WAV paths,
+        // and carry the measured peak lag so the placement can compensate for a
+        // hit whose energy peak is not at the head of the file.
         const notes = []
+        const sfxNotes = await synthesisePlannedSfx(plan, workDir)
+        if (sfxNotes.length > 0) notes.push(...sfxNotes)
+        const result = await buildVideo({ tools: resolved, plan, workDir, signal: exec?.signal })
         if (lint !== null && lint.violations.length > 0) {
           const errors = lint.violations.filter((violation) => violation.severity === 'error')
           if (errors.length > 0) notes.push(`版式体检发现 ${errors.length} 处会明显出错的问题（见报告「版式体检」一节）`)
+        }
+        // The aesthetic audit runs on the plan, before any pixel exists — that is
+        // the only point where nearly every rule has the data it needs.
+        if (aesthetic !== null && aesthetic.failures > 0) {
+          notes.push(`审美准则有 ${aesthetic.failures} 条失败（见报告「审美准则」一节，逐条带帧号）`)
+        }
+        notes.push(...aestheticNotes)
+
+        // Editable delivery: a film you cannot re-time without a full re-render is a
+        // dead end. The timeline JSON round-trips back into a RenderPlan, and the
+        // HTML editor works offline so the user can change a caption or a volume
+        // without asking for another render pass.
+        let timelineFiles = null
+        if (args.timeline === true) {
+          try {
+            const { planToTimeline, renderTimelineHtml } = await import('./lib/timeline.js')
+            const timeline = planToTimeline({ ...plan, output: result.output })
+            const stem = result.output.replace(/\.mp4$/iu, '')
+            const jsonPath = `${stem}.timeline.json`
+            const htmlPath = `${stem}.timeline.html`
+            await writeFile(jsonPath, JSON.stringify(timeline, null, 2), 'utf8')
+            await writeFile(htmlPath, renderTimelineHtml(timeline), 'utf8')
+            timelineFiles = { json: jsonPath, html: htmlPath }
+          } catch (error) {
+            notes.push(`可编辑时间线未导出：${error instanceof Error ? error.message : String(error)}`)
+          }
         }
         let verify = null
         let verifyError
@@ -984,6 +1203,10 @@ export function apply(ctx, rawConfig) {
                     shots: analysis.shots,
                     plannedScenes: Array.isArray(plan.scenes) ? plan.scenes : undefined,
                     duration: analysis.duration,
+                    // Beat-locked plans get an extra gate leg: cuts that miss the
+                    // music read as "shaky for no reason", so the gate measures them.
+                    beatGrid: plan.beatGrid ?? null,
+                    fps: plan.fps,
                     signal: exec?.signal,
                   })
                 } catch (error) {
@@ -1035,7 +1258,7 @@ export function apply(ctx, rawConfig) {
             notes.push(`成片预览条生成失败（${error instanceof Error ? error.message : String(error)}）`)
           }
         }
-        const report = renderBuildReport(result, { plan, verify, verifyError, targets: args.targets, target, imagePlan, lint })
+        const report = renderBuildReport(result, { plan, verify, verifyError, targets: args.targets, target, imagePlan, lint, aesthetic })
         const attached = await attachFor(exec, imageEntries, vision)
         const images = attached.images
         return {
@@ -1052,6 +1275,15 @@ export function apply(ctx, rawConfig) {
           gate: verify?.gate ?? null,
           gate_verdict: verify?.gate?.verdict ?? null,
           lint: lint === null ? null : { ok: lint.summary.ok, errors: lint.summary.errors, warnings: lint.summary.warnings, violations: lint.violations },
+          timeline_files: timelineFiles,
+          aesthetic: aesthetic === null ? null : {
+            failures: aesthetic.failures,
+            warnings: aesthetic.warnings,
+            checked: aesthetic.checked,
+            skipped: aesthetic.skipped,
+            pass_ratio: aesthetic.passRatio,
+            failures_by_rule: (aesthetic.rows ?? []).filter((row) => row.verdict === 'fail').map((row) => ({ id: row.id, evidenceZh: row.evidenceZh, frames: row.frames })),
+          },
           images,
           vision: { active: vision.active, target, profile: vision.profile, reason: vision.reason },
           elapsed_seconds: Math.round((Date.now() - startedAt) / 100) / 10,
@@ -1119,6 +1351,106 @@ export function apply(ctx, rawConfig) {
     },
   })
 
+  /* ---------------------------------------------------------------- media_sfx */
+
+  ctx.tools.register({
+    name: 'media_sfx',
+    description:
+      '程序化合成音效：离线、确定性、零依赖，不下载任何素材。' +
+      '电影系五词（`whoosh` 运镜 / `impact` 落地 / `riser` 铺垫 / `sparkle` 光效 / `swoosh` 转场）+ 拟音' +
+      '（`click` `switch` `paper` `key` `pop` `shutter` `glass` `grain` `sub-drop` `shimmer` `reverse-swell` `glitch`）。' +
+      '每条都会报告**能量峰值位置**——很多音效的峰值不在文件头，按文件头对齐就会晚到；音画对齐要按峰值算。' +
+      '还能规划连发的防机枪感（双样本交替 + 音量阶梯递减 + 间隔加速）。\n' +
+      'Synthesise sound effects procedurally: offline, deterministic, zero dependencies, nothing downloaded. Covers the ' +
+      'cinematic five (whoosh / impact / riser / sparkle / swoosh) plus foley (click, switch, paper, key, pop, shutter, glass, ' +
+      'grain, sub-drop, shimmer, reverse-swell, glitch). Every effect reports its **energy-peak position**, because a hit whose ' +
+      'peak is not at the file head arrives late when you align by the head. Also plans rapid-fire sequences that avoid the ' +
+      'machine-gun effect: alternating samples, a descending volume ladder and accelerating gaps.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        action: {
+          type: 'string',
+          enum: ['list', 'render', 'sequence'],
+          description: 'list 列出音效调色板（先看这个）/ render 合成一条并导出 wav / sequence 规划连发。默认 list。',
+        },
+        kind: { type: 'string', description: 'render 时的音色名（如 impact / whoosh / riser / paper）。' },
+        params: {
+          type: 'object',
+          description: 'render 时的音色参数（时长、亮度、尾音等，见 palette 的 params 说明）；不同音色支持的键不同。',
+        },
+        seed: { type: 'integer', description: '随机种子。同一个种子出同一段音频；连发时给不同种子才不像复读。' },
+        output_path: { type: 'string', description: 'wav 输出路径；省略时写到 ~/.dsh/media-senses/output。' },
+        peak_db: { type: 'number', description: '峰值归一化目标（dBFS，默认 -1，不要给正数）。' },
+        sequence: {
+          type: 'object',
+          description: 'sequence 的规格：{count, kinds?, volumeLadder?, interval?}。kinds 是音色名数组（给两个就会交替），' +
+            'volumeLadder 是音量递减阶梯（如 [0.4,0.25]），interval 是间隔毫秒或 {from,to,ease} 的加速曲线。',
+        },
+        start_seconds: { type: 'number', description: 'sequence 的绝对起点（秒），用来把计划直接对上时间线。' },
+      },
+    },
+    output: {
+      schema: TEXT_OUTPUT_SCHEMA,
+      render: renderTextAndImages,
+    },
+    isConcurrencySafe: () => true,
+    timeoutMs: 240_000,
+    async execute(args, exec) {
+      const action = typeof args.action === 'string' ? args.action : 'list'
+      let sfx
+      try {
+        sfx = await import('./lib/sfx.js')
+      } catch (error) {
+        throw new Error(`音效引擎不可用：${error instanceof Error ? error.message : String(error)}`)
+      }
+      if (action === 'list') {
+        const palette = (sfx.SFX_KINDS ?? []).map((kind) => ({ kind, ...(sfx.SFX_PALETTE?.[kind] ?? {}) }))
+        return { kind: 'sfx', action, report: renderSfxReport({ action: 'list', palette }), images: [] }
+      }
+      if (action === 'render') {
+        const kind = String(args.kind ?? '').trim()
+        if (kind.length === 0) throw new Error('render 需要 kind：先 action:"list" 看有哪些音色')
+        const params = isPlainObject(args.params) ? { ...args.params } : {}
+        if (Number.isFinite(args.seed)) params.seed = args.seed
+        const rendered = sfx.synthesizeSfx(kind, params)
+        const outputPath = typeof args.output_path === 'string' && args.output_path.trim().length > 0
+          ? (isAbsolute(args.output_path) ? args.output_path : resolve(process.cwd(), args.output_path))
+          : join(asrBaseDir(config.modelDir), 'output', `sfx-${kind}-${Date.now()}.wav`)
+        await mkdir(dirname(outputPath), { recursive: true })
+        const written = await sfx.writeSfxWav(outputPath, rendered.samples, rendered.sampleRate, {
+          peakDb: Number.isFinite(args.peak_db) ? args.peak_db : -1,
+        })
+        const lag = sfx.measureSfxPeakLag(rendered.samples, rendered.sampleRate)
+        const info = {
+          kind,
+          path: written.path,
+          duration: written.duration,
+          sampleRate: rendered.sampleRate,
+          peakDb: written.peakDb,
+          peakSeconds: lag.peakSeconds,
+          peakFraction: lag.peakFraction,
+        }
+        return { kind: 'sfx', action, path: written.path, report: renderSfxReport({ action: 'render', info }), images: [] }
+      }
+      if (action === 'sequence') {
+        const spec = isPlainObject(args.sequence) ? args.sequence : {}
+        const schedule = sfx.sequenceSfx(Number.isFinite(spec.count) ? spec.count : 4, {
+          ...spec,
+          startSeconds: Number.isFinite(args.start_seconds) ? args.start_seconds : 0,
+        })
+        return { kind: 'sfx', action, report: renderSfxReport({ action: 'sequence', schedule }), images: [] }
+      }
+      throw new Error(`未知 action: ${action}（支持 list / render / sequence）`)
+    },
+    presentCall(args) {
+      const action = typeof args.action === 'string' ? args.action : 'list'
+      if (action === 'render') return { card: 'generic', title: `Synthesize sound effect: ${args.kind ?? ''}`.trim(), kind: 'execute' }
+      return { card: 'generic', title: 'Sound-effect palette', kind: 'execute' }
+    },
+  })
+
   /* --------------------------------------------------------------- media_styles */
 
   ctx.tools.register({
@@ -1138,6 +1470,11 @@ export function apply(ctx, rawConfig) {
         query: { type: 'string', description: '气质词或编号（如「水墨」「粒子」「B3」）。' },
         id: { type: 'string', description: 'show 时精确指定的风格编号（如 A1）。' },
         series: { type: 'string', description: '系列筛选：AG / M / K / Z / H / L / V / X / O / R。' },
+        source: {
+          type: 'string',
+          enum: ['code', 'mg'],
+          description: 'code=341 个**单镜头**代码动画风格（默认）；mg=15 套**整片** MG 视觉系统（配色/字号/运动曲线/质感/禁忌一次给全，适合整套片子统一）。',
+        },
         limit: { type: 'integer', description: '返回条数上限（默认 8，最多 50）。' },
       },
     },
@@ -1145,8 +1482,25 @@ export function apply(ctx, rawConfig) {
     isConcurrencySafe: () => true,
     timeoutMs: 60_000,
     async execute(args, exec) {
-      const skillDir = resolveSkillDir(config.skillDir)
       const action = args.action === 'show' || args.action === 'list' ? args.action : 'search'
+      // Whole-film motion-graphics styles are a separate library from the
+      // single-shot prompts; `source` selects which one is being asked about.
+      if (args.source === 'mg') {
+        const mg = await import('./lib/mgstyles.js')
+        if (action === 'list') {
+          return { kind: 'styles', action, source: 'mg', count: mg.MG_STYLE_COUNT, images: [], report: renderMgStylesReport({ action, styles: mg.MG_STYLES }) }
+        }
+        if (action === 'show') {
+          const id = typeof args.id === 'string' && args.id.trim().length > 0 ? args.id.trim() : String(args.query ?? '').trim()
+          const style = mg.getMgStyle(id)
+          if (style === undefined) throw new Error(`整片风格里没有「${id}」；先用 action:"list" 看 15 套。`)
+          const prompt = mg.mgStylePrompt(style.id ?? id)
+          return { kind: 'styles', action, source: 'mg', id: style.id, images: [], report: renderMgStylesReport({ action, style, prompt }) }
+        }
+        const entries = mg.findMgStyles(args.query, { limit: Number.isInteger(args.limit) ? args.limit : 8 })
+        return { kind: 'styles', action, source: 'mg', query: args.query ?? null, matches: entries.length, images: [], report: renderMgStylesReport({ action, query: args.query, entries }) }
+      }
+      const skillDir = resolveSkillDir(config.skillDir)
       let payload
       let images = []
       if (action === 'list') {
@@ -1807,6 +2161,7 @@ export function apply(ctx, rawConfig) {
         include_metrics: { type: 'boolean', description: '是否跑完整数值对比（需要分析两边，稍慢；默认 true）。' },
         include_continuity: { type: 'boolean', description: '是否判定镜头承接（切点有没有把东西带过去、像不像 PPT；默认 true，比数值对比更快）。' },
         rubric: { type: 'boolean', description: '是否附上 7 维评分卡空白表，让模型自评并给出带时间码证据的改法（默认 false）。' },
+        pixel: { type: 'boolean', description: '是否在同一时刻做像素级比对（PSNR/SSIM/CIEDE2000 + 九宫格最差块），默认 true。整片数值看不出「哪里不一样」，这一项能。' },
         mode: { type: 'string', enum: ['auto', 'blind', 'vision'], description: '呈现模式：auto 按当前模型能力自动选择（默认）。' },
       },
       required: ['reference', 'produced'],
@@ -1897,6 +2252,34 @@ export function apply(ctx, rawConfig) {
           mode: args.layout === 'side' ? 'side' : 'stack',
         })
         const attached = await attachFor(exec, [{ path: compare.path, name: 'media-senses-compare.png', kind: 'compare' }], vision)
+        // Pixel-level evidence at the sampled moment. The numeric diff above works
+        // on whole-film averages and cannot say *where* two frames differ; this can.
+        // Frames are pulled losslessly (PNG) rather than from the JPEG keyframes,
+        // because JPEG ringing would show up as a difference that is not there.
+        let pixelQa = null
+        const pixelNotes = []
+        if (args.pixel !== false) {
+          try {
+            const { decodePngPixels, comparePixels } = await import('./lib/pixelqa.js')
+            for (const [tag, source, seconds] of [['qa-ref', reference.path, refTime], ['qa-built', produced.path, builtTime]]) {
+              await run(resolved.ffmpeg, [
+                '-v', 'error', '-nostdin', '-y', '-ss', String(seconds), '-i', source,
+                '-frames:v', '1', '-an', '-update', '1', `${tag}.png`,
+              ], { cwd: workDir, timeoutMs: 120_000 })
+            }
+            const refPixels = decodePngPixels(await readFile(join(workDir, 'qa-ref.png')))
+            const builtPixels = decodePngPixels(await readFile(join(workDir, 'qa-built.png')))
+            pixelQa = {
+              ...comparePixels(refPixels, builtPixels, { cols: 3, rows: 3, maxWorstRegions: 3 }),
+              refTime,
+              builtTime,
+              refSize: `${refPixels.width}×${refPixels.height}`,
+              builtSize: `${builtPixels.width}×${builtPixels.height}`,
+            }
+          } catch (error) {
+            pixelNotes.push(`像素比对未跑：${error instanceof Error ? error.message : String(error)}`)
+          }
+        }
         const compareReport = renderCompareReport({
           reference: reference.path,
           produced: produced.path,
@@ -1908,6 +2291,8 @@ export function apply(ctx, rawConfig) {
         // that each need a timecode and a numeric fix, which is what makes the
         // next revision actionable.
         let report = compareReport
+        if (pixelQa !== null) report = `${report}\n\n${renderPixelQaSection(pixelQa)}`
+        if (pixelNotes.length > 0) report = `${report}\n\n${pixelNotes.map((note) => `- ${note}`).join('\n')}`
         let rubric = null
         if (args.rubric === true) {
           try {
@@ -1926,6 +2311,7 @@ export function apply(ctx, rawConfig) {
           summary: diff.summary ?? {},
           rows: diff.rows ?? [],
           continuity: diff.continuity ?? null,
+          pixel_qa: pixelQa,
           rubric,
           compare_image: compare.path ?? null,
           images: attached.images,
@@ -1938,6 +2324,243 @@ export function apply(ctx, rawConfig) {
     },
     presentCall(args) {
       return { card: 'generic', title: `Compare ${args.reference} vs ${args.produced}`, kind: 'read' }
+    },
+  })
+
+  /* ------------------------------------------------------------ media_review */
+
+  ctx.tools.register({
+    name: 'media_review',
+    description:
+      '对一支成片做**独立终检**：把验收门禁（六条腿）、镜头承接、判例式审美准则、卡点回测、音频指标汇总成一份' +
+      '按 A 音画 / B 节奏 / C 画面 / D 数据安全 / E 一致性 五节排布的审查报告，每条结论都必须带**帧号或秒**做证据；' +
+      '没有时间证据的问题不会进阻塞项，只会降级成提醒。报告头会写明「本报告由独立审计生成，制作者的自检不作为证据」。\n' +
+      'Run an independent final review of a finished film: acceptance gate (six legs), shot-to-shot continuity, the ' +
+      'case-based aesthetic rules, beat backtest and audio metrics are assembled into one report with five sections ' +
+      '(A audio-visual, B rhythm, C picture, D data safety, E consistency). Every finding must carry frame-number or ' +
+      'second evidence; a finding without evidence is downgraded to a reminder instead of blocking the film.',
+    parameters: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        path: { type: 'string', description: '要审查的成片路径。' },
+        reference: { type: 'string', description: '可选的参考片路径；给了就做承接/相似度对比（检验复刻是否真的接住了镜头）。' },
+        plan_path: {
+          type: 'string',
+          description: '可选：当初渲染用的 RenderPlan JSON（对象或文件路径）。给了才能核对计划与成片是否一致，也才能跑卡点回测。',
+        },
+        plan: { type: 'object', description: '也可以直接给 RenderPlan 对象（优先于 plan_path）。' },
+        mode: { type: 'string', enum: ['auto', 'blind', 'vision'], description: '呈现模式；blind 会去掉主观形容词，只留判定/数字/帧号。' },
+        max_keyframes: { type: 'integer', description: '抽多少关键帧（默认 8，够做版式与亮度证据）。' },
+        output_dir: { type: 'string', description: '产物目录（关键帧等）；省略时写入临时目录。' },
+      },
+      required: ['path'],
+    },
+    output: {
+      schema: TEXT_OUTPUT_SCHEMA,
+      render: renderTextAndImages,
+    },
+    isConcurrencySafe: () => true,
+    timeoutMs: 1_500_000,
+    async execute(args, exec) {
+      const resolved = await tools()
+      const input = await locateInput(args.path, config)
+      const probed = await probe(resolved, input.path)
+      const summary = summariseProbe(probed)
+      if (isImageLike(summary)) throw new Error(`${args.path} 是图片，不是片子；媒体审查需要一段视频。`)
+
+      let plan = isPlainObject(args.plan) ? args.plan : null
+      if (plan === null && typeof args.plan_path === 'string' && args.plan_path.trim().length > 0) {
+        const planPath = isAbsolute(args.plan_path) ? args.plan_path : resolve(process.cwd(), args.plan_path)
+        try {
+          plan = JSON.parse(await readFile(planPath, 'utf8'))
+        } catch (error) {
+          throw new Error(`读不到 plan_path 指定的渲染计划：${error instanceof Error ? error.message : String(error)}`)
+        }
+      }
+
+      const outDir = await artifactDir(input.path, args.output_dir ?? config.outputDir)
+      const workDir = await makeWorkDir('media-senses-review')
+      const notes = []
+      const startedAt = Date.now()
+      try {
+        const analysis = await analyzeVideo({
+          tools: resolved,
+          file: input.path,
+          workDir,
+          options: {
+            maxKeyframes: Number.isInteger(args.max_keyframes) ? Math.min(60, Math.max(1, args.max_keyframes)) : 8,
+            wantContactSheet: false,
+            wantFrames: false,
+            wantAudio: false,
+            artifactDir: outDir,
+          },
+          signal: exec?.signal,
+        })
+
+        // Each engine is optional: a review that silently drops a section is
+        // worse than one that says "this section could not be measured", so every
+        // failure becomes a note rather than an exception.
+        let audio = null
+        if (Array.isArray(summary.audio) && summary.audio.length > 0) {
+          try {
+            audio = await analyzeAudio({
+              tools: resolved,
+              file: input.path,
+              workDir,
+              options: { wantArtifacts: false, wantChords: false, wantStructure: true, maxSeconds: config.audioMaxSeconds },
+              signal: exec?.signal,
+            })
+          } catch (error) {
+            notes.push(`音频分析未跑：${error instanceof Error ? error.message : String(error)}`)
+          }
+        }
+
+        let gate = null
+        try {
+          const { runGate } = await import('./lib/gate.js')
+          gate = await runGate({
+            tools: resolved,
+            file: input.path,
+            workDir,
+            shots: analysis.shots,
+            plannedScenes: Array.isArray(plan?.scenes) ? plan.scenes : undefined,
+            duration: analysis.duration,
+            beatGrid: plan?.beatGrid ?? null,
+            fps: plan?.fps ?? analysis.format?.fps ?? 30,
+            signal: exec?.signal,
+          })
+        } catch (error) {
+          notes.push(`验收门禁未跑：${error instanceof Error ? error.message : String(error)}`)
+        }
+
+        let continuity = null
+        try {
+          const { analyzeContinuity } = await import('./lib/continuity.js')
+          const builtContinuity = await analyzeContinuity({
+            tools: resolved,
+            file: input.path,
+            workDir,
+            shots: analysis.shots,
+            duration: analysis.duration,
+            signal: exec?.signal,
+          })
+          if (typeof args.reference === 'string' && args.reference.trim().length > 0) {
+            const ref = await locateInput(args.reference, config)
+            const refAnalysisForContinuity = await analyzeVideo({
+              tools: resolved,
+              file: ref.path,
+              workDir,
+              options: { maxKeyframes: 2, wantContactSheet: false, wantFrames: false, wantAudio: false },
+              signal: exec?.signal,
+            })
+            const refContinuity = await analyzeContinuity({
+              tools: resolved,
+              file: ref.path,
+              workDir,
+              shots: refAnalysisForContinuity.shots,
+              duration: refAnalysisForContinuity.duration,
+              signal: exec?.signal,
+            })
+            // review.js accepts the {ref, built} comparison shape as well as a
+            // single measurement; the pair is what makes "did we carry it over"
+            // answerable against a reference.
+            continuity = { ref: refContinuity, built: builtContinuity }
+          } else {
+            continuity = builtContinuity
+          }
+        } catch (error) {
+          notes.push(`镜头承接对比未跑：${error instanceof Error ? error.message : String(error)}`)
+        }
+
+        let aesthetic = null
+        try {
+          const { auditAesthetic } = await import('./lib/aesthetic.js')
+          const fps = plan?.fps ?? 30
+          aesthetic = auditAesthetic({
+            shots: (analysis.shots ?? []).map((shot, index) => ({
+              id: `s${index + 1}`,
+              durationSeconds: shot.duration,
+              fromFrame: Math.round((shot.start ?? 0) * fps),
+              toFrame: Math.round(((shot.start ?? 0) + (shot.duration ?? 0)) * fps),
+            })),
+            // `analyzeVideo` exposes keyframe timings through the shot list, not as
+            // a flat array, so the frame evidence is reconstructed from shot
+            // boundaries. Text-height and full-frame-impact rules still cannot be
+            // measured from a finished film and will report themselves as skipped.
+            frames: (analysis.shots ?? []).flatMap((shot, index) => [
+              { index: index * 2, timeSeconds: shot.start ?? 0, motionLevel: shot.avgMotion ?? shot.motion ?? 0 },
+              { index: index * 2 + 1, timeSeconds: (shot.start ?? 0) + (shot.duration ?? 0), motionLevel: 0 },
+            ]),
+            timeline: Array.isArray(plan?.scenes)
+              ? {
+                  cuts: plan.scenes.map((scene, index) => ({
+                    index,
+                    fromFrame: Math.round((plan.scenes.slice(0, index).reduce((sum, item) => sum + (Number(item.duration) || 0), 0)) * fps),
+                  })),
+                }
+              : undefined,
+            captions: Array.isArray(plan?.captions) ? plan.captions : undefined,
+            audio: { bgmPresent: typeof plan?.audio?.music === 'string' },
+          })
+        } catch (error) {
+          notes.push(`审美准则审计未跑：${error instanceof Error ? error.message : String(error)}`)
+        }
+
+        // The beat backtest needs designed cut frames and measured beats. We have
+        // the designed side from the plan; the measured side needs a beat grid
+        // measurement on the rendered audio, which the gate's alignment leg has
+        // already done from the shot list, so the backtest object stays advisory.
+        let beatsync = null
+        if (plan?.beatGrid) {
+          beatsync = {
+            grid: plan.beatGrid,
+            alignment: gate?.legs?.find((leg) => leg.id === 'alignment')?.value ?? null,
+          }
+        }
+
+        const { auditFilm, renderReviewReport } = await import('./lib/review.js')
+        const report = auditFilm({
+          gate,
+          continuity,
+          aesthetic,
+          beatsync,
+          audio,
+          plan,
+          shots: analysis.shots,
+          fps: plan?.fps ?? 30,
+          duration: analysis.duration,
+        })
+        const vision = await visionFor(exec, args)
+        const target = targetOf(vision)
+        const markdown = renderReviewReport(report, { blind: target === 'blind' })
+
+        const elapsed = Math.round((Date.now() - startedAt) / 100) / 10
+        notes.push(...(report.warnings ?? []))
+        return {
+          kind: 'review',
+          file: input.path,
+          verdict: report.verdict,
+          score: report.score,
+          blockers: report.blockers?.length ?? 0,
+          must_fix: report.mustFix?.length ?? 0,
+          sections: (report.sections ?? []).map((section) => ({
+            id: section.id,
+            fails: (section.rows ?? []).filter((row) => row.verdict === 'fail').length,
+            warns: (section.rows ?? []).filter((row) => row.verdict === 'warn').length,
+            skipped: (section.rows ?? []).filter((row) => row.verdict === 'skip').length,
+          })),
+          elapsed_seconds: elapsed,
+          images: [],
+          vision: { active: vision.active, target, profile: vision.profile, reason: vision.reason },
+          report: notes.length > 0 ? `${markdown}\n\n## 备注\n${notes.map((note) => `- ${note}`).join('\n')}` : markdown,
+        }
+      } finally {
+        await removeWorkDir(workDir)
+      }
+    },
+    presentCall(args) {
+      return { card: 'generic', title: `Review ${args.path}`, kind: 'read', locations: [{ path: String(args.path) }] }
     },
   })
 

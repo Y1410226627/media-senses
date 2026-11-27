@@ -20,7 +20,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { resolveTools, makeWorkDir, removeWorkDir, probe } from '../lib/ffmpeg.js'
-import { runGate, GATE_THRESHOLDS, GATE_OPTIONS } from '../lib/gate.js'
+import { runGate, GATE_THRESHOLDS, GATE_OPTIONS, legAlignment, cutTimesFromShots } from '../lib/gate.js'
 import { gateSummaryLine, renderBuildReport } from '../lib/render-v2.js'
 
 let passed = 0
@@ -366,13 +366,78 @@ await check('a small element moving continuously is NOT reported as dead air', a
   }
 })
 
+await check('alignment leg: no grid means SKIP, not a pass', () => {
+  const result = legAlignment([1, 2, 3], null, 30)
+  assert.equal(result.id, 'alignment')
+  assert.equal(result.state, 'SKIP')
+  assert.ok(result.detail.includes('节拍网格'))
+})
+
+await check('alignment leg: cuts sitting on beats pass and are called ideal', () => {
+  // 120 BPM: one beat every 0.5 s, first beat at 0.1 s.
+  const grid = { period: 0.5, t0: 0.1, outputOffsetSeconds: 0 }
+  const cuts = [0.6, 1.1, 1.6]
+  const result = legAlignment(cuts, grid, 30)
+  assert.equal(result.state, 'PASS')
+  assert.equal(result.value.maxAbsFrames, 0)
+  assert.ok(result.detail.includes('理想区'), result.detail)
+})
+
+await check('alignment leg: a cut most of a beat late fails and names the worst cut', () => {
+  // Error is always measured to the *nearest* beat, so it can never exceed half a
+  // beat: 0.5 s beats at 30 fps means at most 7.5 frames are attributable. Seven
+  // frames is therefore the worst a single cut can read as, and it must fail.
+  const grid = { period: 0.5, t0: 0.1, outputOffsetSeconds: 0 }
+  const cuts = [0.6, 1.1 + 7 / 30, 1.6]
+  const result = legAlignment(cuts, grid, 30)
+  assert.equal(result.state, 'FAIL', result.detail)
+  assert.ok(result.value.maxAbsFrames >= 6.9, `max ${result.value.maxAbsFrames}`)
+  assert.ok(Math.abs(result.value.worstAtSeconds - 1.3333) < 0.01, String(result.value.worstAtSeconds))
+  assert.ok(result.detail.includes('最差点'), result.detail)
+})
+
+await check('alignment leg: the measured output offset shifts the beat times, not the grid', () => {
+  // The encoded audio track lags the picture by a fixed amount. Cuts placed at
+  // grid + offset must read as aligned; ignoring the term moves every cut by the
+  // same amount and the leg has to see that. A 1.28-frame lag (the AAC priming
+  // figure at 30 fps) sits inside tolerance, so this test exaggerates it to 4
+  // frames: the assertion is that the term is applied, not that 4 is typical.
+  const fps = 30
+  const offset = 4 / fps
+  const grid = { period: 0.5, t0: 0.1, outputOffsetSeconds: offset }
+  const cuts = [0.6 + offset, 1.1 + offset, 1.6 + offset]
+  const compensated = legAlignment(cuts, grid, fps)
+  assert.equal(compensated.state, 'PASS', compensated.detail)
+  assert.equal(compensated.value.maxAbsFrames, 0, 'the offset must cancel exactly')
+  const naive = legAlignment(cuts, { ...grid, outputOffsetSeconds: 0 }, fps)
+  assert.ok(naive.value.maxAbsFrames >= 3.9, `uncompensated error ${naive.value.maxAbsFrames}`)
+  assert.notEqual(naive.state, 'PASS', `ignoring the offset must not pass: ${naive.detail}`)
+})
+
+await check('alignment leg: a quarter-frame miss is still a pass, a whole beat off is not', () => {
+  const grid = { period: 0.5, t0: 0, outputOffsetSeconds: 0 }
+  assert.equal(legAlignment([0.5 + 0.25 / 30, 1.0], grid, 30).state, 'PASS')
+  // 0.25 s off is half a beat: the grid fit still measures it against the same
+  // beat, so the error has to be reported rather than silently re-anchored.
+  assert.equal(legAlignment([0.75, 1.0], grid, 30).state, 'FAIL')
+})
+
+await check('cutTimesFromShots drops the film start and keeps order', () => {
+  const cuts = cutTimesFromShots([
+    { start: 2.5, duration: 1 },
+    { start: 0, duration: 2.5 },
+    { start: 1, duration: 1.5 },
+  ])
+  assert.deepEqual(cuts, [1, 2.5])
+})
+
 await check('every leg reports a state and a human-readable detail', async () => {
   const file = join(scratch, 'plain.mp4')
   await writeSynthetic(file, () => [60, 70, 80], { fps: 12, frames: 24, width: 64, height: 36 })
   const workDir = await makeWorkDir('gate-metric')
   try {
     const result = await runGate({ tools, file, workDir })
-    assert.ok(Array.isArray(result.legs) && result.legs.length === 5, 'five legs are always reported')
+    assert.ok(Array.isArray(result.legs) && result.legs.length === 6, 'six legs are always reported')
     for (const leg of result.legs) {
       assert.ok(typeof leg.id === 'string' && leg.id.length > 0)
       assert.ok(typeof leg.title === 'string' && leg.title.length > 0, `${leg.id} needs a Chinese title`)

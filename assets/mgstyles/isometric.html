@@ -1,0 +1,540 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>等轴 2.5D · NOVA ISLE</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #EDE7FF; overflow: hidden; }
+  #stage { position: absolute; left: 50%; top: 50%; width: 1920px; height: 1080px;
+           transform: translate(-50%, -50%) scale(1); transform-origin: 50% 50%; }
+  canvas { display: block; width: 1920px; height: 1080px; }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="scene" width="1920" height="1080"></canvas></div>
+<script>
+/*
+ * 整片 MG 模板 · 等轴 2.5D（03-isometric）
+ *
+ * 一座微缩城市在等轴网格上自己长出来：地面砖从中心波浪落位 → 建筑按
+ * 「底面-立面-顶面」三段生长 → 车流/无人机/数据流让城市活起来 → 镜头整组
+ * 平移后拉远，露出漂浮岛，等轴平面上的标题卡落定。
+ *
+ * 确定性契约：画面完全由 window.renderAt(t) 决定；无 rAF、无时钟、无
+ * Math.random；布局在初始化时用固定种子的 mulberry32 生成一次。
+ * 可通过 window.__MS_TEMPLATE {brand,title,seed} 与 window.__MS_DURATION 覆盖。
+ */
+'use strict'
+
+const W = 1920
+const H = 1080
+const DUR = Number(window.__MS_DURATION) > 0 ? Number(window.__MS_DURATION) : 10
+const cfg = Object.assign({
+  brand: 'NOVA ISLE',
+  title: '云屿 · 让城市自己生长',
+  seed: 20261127,
+}, window.__MS_TEMPLATE || {})
+
+const PAL = {
+  groundA: '#EDE7FF',
+  groundB: '#E0D7FF',
+  grass: '#B8F2E6',
+  peach: '#FFD8C2',
+  sky: '#BFD9FF',
+  white: '#FFFFFF',
+  ink: '#3A3550',
+  shadeInk: '#2C2840',
+}
+
+const canvas = document.getElementById('scene')
+const ctx = canvas.getContext('2d')
+
+/* ---------------------------------------------------------------- 工具 */
+function mulberry32(seed) {
+  let a = seed >>> 0
+  return function random() {
+    a = (a + 0x6D2B79F5) >>> 0
+    let t = Math.imul(a ^ (a >>> 15), a | 1)
+    t = t + Math.imul(t ^ (t >>> 7), 61 | t) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v)
+const lerp = (a, b, u) => a + (b - a) * u
+const smooth = (u) => { const v = clamp01(u); return v * v * (3 - 2 * v) }
+const easeOutCubic = (u) => 1 - Math.pow(1 - clamp01(u), 3)
+const easeInOutCubic = (u) => {
+  const v = clamp01(u)
+  return v < 0.5 ? 4 * v * v * v : 1 - Math.pow(-2 * v + 2, 3) / 2
+}
+const easeOutBack = (u, s = 1.4) => {
+  const v = clamp01(u)
+  return 1 + (s + 1) * Math.pow(v - 1, 3) + s * Math.pow(v - 1, 2)
+}
+function hexToRgb(hex) {
+  const value = parseInt(hex.slice(1), 16)
+  return [(value >> 16) & 255, (value >> 8) & 255, value & 255]
+}
+function shade(hex, factor) {
+  const [r, g, b] = hexToRgb(hex)
+  const mix = (channel) => Math.max(0, Math.min(255, Math.round(channel * factor)))
+  return 'rgb(' + mix(r) + ',' + mix(g) + ',' + mix(b) + ')'
+}
+function polygon(points, fill) {
+  ctx.beginPath()
+  ctx.moveTo(points[0].x, points[0].y)
+  for (let i = 1; i < points.length; i += 1) ctx.lineTo(points[i].x, points[i].y)
+  ctx.closePath()
+  ctx.fillStyle = fill
+  ctx.fill()
+}
+function ellipse(x, y, rx, ry, fill) {
+  ctx.beginPath()
+  ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2)
+  ctx.fillStyle = fill
+  ctx.fill()
+}
+
+/* ------------------------------------------------------- 等轴投影与布局 */
+const U = 54
+const ORIGIN = { x: 960, y: 640 }
+const GRID_MIN = -4
+const GRID_MAX = 4
+/** 等轴投影：x/y 是地面网格坐标，z 是高度（单位=U）。 */
+function iso(x, y, z) {
+  return {
+    x: ORIGIN.x + (x - y) * 0.866 * U,
+    y: ORIGIN.y + (x + y) * 0.5 * U - z * U,
+  }
+}
+
+const rng = mulberry32(cfg.seed)
+
+// 地面砖：保留两格宽的道路（gx=0 与 gy=0 附近），其余放建筑/树。
+const TILES = []
+for (let gx = GRID_MIN; gx < GRID_MAX; gx += 1) {
+  for (let gy = GRID_MIN; gy < GRID_MAX; gy += 1) {
+    if (gx === 0 || gy === 0) continue
+    const cx = gx + 0.5
+    const cy = gy + 0.5
+    const distance = Math.hypot(cx, cy)
+    TILES.push({ gx, gy, cx, cy, delay: distance * 0.012, checker: (gx + gy) % 2 === 0 })
+  }
+}
+
+const BUILDINGS = []
+const TREES = []
+for (const tile of TILES) {
+  const roll = rng()
+  if (roll < 0.58) {
+    const height = 1 + rng() * 2.2
+    BUILDINGS.push({
+      cx: tile.cx,
+      cy: tile.cy,
+      half: 0.3,
+      height,
+      colour: [PAL.grass, PAL.peach, PAL.sky, PAL.white][Math.floor(rng() * 4)],
+      delay: Math.hypot(tile.cx, tile.cy) * 0.02,
+      windowRows: Math.max(1, Math.round(height * 2)),
+      windowCols: rng() > 0.5 ? 2 : 3,
+    })
+  } else if (roll < 0.72) {
+    TREES.push({ cx: tile.cx, cy: tile.cy, delay: Math.hypot(tile.cx, tile.cy) * 0.018 })
+  }
+}
+// 保证至少一个地标：把离中心最近的一栋拔高。
+const landmark = BUILDINGS.reduce((best, building) =>
+  best === null || Math.hypot(building.cx, building.cy) < Math.hypot(best.cx, best.cy) ? building : best, null)
+if (landmark !== null) {
+  landmark.height = 3.4
+  landmark.colour = PAL.peach
+  landmark.landmark = true
+}
+BUILDINGS.sort((left, right) => left.cx + left.cy - (right.cx + right.cy))
+
+const CARS = [
+  { along: 'x', lane: 0.32, offset: 0.0, colour: PAL.peach, speed: 0.36 },
+  { along: 'x', lane: 0.68, offset: 2.6, colour: PAL.white, speed: 0.30 },
+  { along: 'y', lane: 0.34, offset: 1.4, colour: PAL.sky, speed: 0.33 },
+]
+const CLOUDS_BACK = Array.from({ length: 5 }, () => ({
+  x: rng() * W,
+  y: 120 + rng() * 260,
+  scale: 0.8 + rng() * 1.2,
+}))
+const CLOUDS_FRONT = Array.from({ length: 3 }, () => ({
+  x: rng() * W,
+  y: 820 + rng() * 160,
+  scale: 0.9 + rng() * 0.9,
+}))
+const STREAM_PAIRS = [
+  [0, 3],
+  [1, 7],
+  [2, 5],
+  [4, 9],
+]
+
+/* ------------------------------------------------------------- 分镜绘制 */
+function drawBackground(p, camShiftX) {
+  const gradient = ctx.createRadialGradient(W / 2, 420, 120, W / 2, 560, 1250)
+  gradient.addColorStop(0, '#F6F1FF')
+  gradient.addColorStop(1, '#DCE6FF')
+  ctx.fillStyle = gradient
+  ctx.fillRect(0, 0, W, H)
+  // 远景云：视差 0.6，永远比城市慢。
+  for (const cloud of CLOUDS_BACK) {
+    const x = cloud.x + camShiftX * 0.6
+    ctx.globalAlpha = 0.55
+    ellipse(x, cloud.y, 150 * cloud.scale, 44 * cloud.scale, PAL.white)
+    ellipse(x + 90 * cloud.scale, cloud.y - 22 * cloud.scale, 100 * cloud.scale, 34 * cloud.scale, PAL.white)
+    ctx.globalAlpha = 1
+  }
+}
+
+function drawIslandBase() {
+  const corners = [
+    iso(GRID_MIN, GRID_MIN, 0),
+    iso(GRID_MAX, GRID_MIN, 0),
+    iso(GRID_MAX, GRID_MAX, 0),
+    iso(GRID_MIN, GRID_MAX, 0),
+  ]
+  const depth = 0.7 * U
+  // 岛体侧面（只画朝向镜头的两侧）。
+  polygon([corners[1], corners[2], { x: corners[2].x, y: corners[2].y + depth }, { x: corners[1].x, y: corners[1].y + depth }], shade(PAL.groundB, 0.88))
+  polygon([corners[2], corners[3], { x: corners[3].x, y: corners[3].y + depth }, { x: corners[2].x, y: corners[2].y + depth }], shade(PAL.groundB, 0.76))
+  // 岛底阴影，落在虚空里。
+  ellipse(ORIGIN.x, ORIGIN.y + depth + 120, 620, 96, 'rgba(58,53,80,0.10)')
+}
+
+function drawGroundTiles(p) {
+  for (const tile of TILES) {
+    const local = clamp01((p - 0.015 - tile.delay) / 0.10)
+    if (local <= 0) continue
+    const drop = (1 - easeOutBack(local, 1.6)) * 1.6
+    const z = drop
+    const points = [
+      iso(tile.gx, tile.gy, z),
+      iso(tile.gx + 1, tile.gy, z),
+      iso(tile.gx + 1, tile.gy + 1, z),
+      iso(tile.gx, tile.gy + 1, z),
+    ]
+    const base = tile.checker ? PAL.groundA : PAL.groundB
+    polygon(points, base)
+    // 砖的侧面厚度，随下落高度变化。
+    if (drop > 0.05) {
+      polygon(
+        [points[2], points[3], { x: points[3].x, y: points[3].y + drop * U }, { x: points[2].x, y: points[2].y + drop * U }],
+        shade(base, 0.9),
+      )
+    }
+  }
+}
+
+function drawRoadMarkings() {
+  ctx.strokeStyle = 'rgba(255,255,255,0.75)'
+  ctx.lineWidth = 3
+  ctx.setLineDash([16, 18])
+  const start = iso(-4, 0.5, 0)
+  const end = iso(4.6, 0.5, 0)
+  ctx.beginPath()
+  ctx.moveTo(start.x, start.y)
+  ctx.lineTo(end.x, end.y)
+  ctx.stroke()
+  const start2 = iso(0.5, -4, 0)
+  const end2 = iso(0.5, 4.6, 0)
+  ctx.beginPath()
+  ctx.moveTo(start2.x, start2.y)
+  ctx.lineTo(end2.x, end2.y)
+  ctx.stroke()
+  ctx.setLineDash([])
+}
+
+function drawBuilding(building, p, time) {
+  const local = clamp01((p - 0.16 - building.delay) / 0.16)
+  if (local <= 0) return
+  const growth = easeOutBack(local, 0.6)
+  const wallHeight = Math.min(1, growth) * building.height
+  const capT = clamp01((growth - 0.72) / 0.28)
+  const f = building.half
+  const x = building.cx
+  const y = building.cy
+  const top = building.colour
+  const left = shade(building.colour, 0.82)
+  const right = shade(building.colour, 0.66)
+
+  // 左/右立面
+  polygon(
+    [iso(x - f, y - f, 0), iso(x - f, y + f, 0), iso(x - f, y + f, wallHeight), iso(x - f, y - f, wallHeight)],
+    left,
+  )
+  polygon(
+    [iso(x - f, y + f, 0), iso(x + f, y + f, 0), iso(x + f, y + f, wallHeight), iso(x - f, y + f, wallHeight)],
+    right,
+  )
+  // 窗户：立面点亮，按楼层从上到下依次。
+  if (growth > 0.85) {
+    const lit = clamp01((p - 0.24 - building.delay) / 0.20)
+    const rows = building.windowRows
+    const cols = building.windowCols
+    for (let row = 0; row < rows; row += 1) {
+      for (let col = 0; col < cols; col += 1) {
+        const order = (row * cols + col) / Math.max(1, rows * cols - 1)
+        if (order > lit) continue
+        const z0 = (row + 0.25) / (rows + 0.6) * wallHeight
+        const z1 = z0 + wallHeight / (rows + 0.6) * 0.52
+        const u0 = -f + 0.12 + col * ((2 * f - 0.24) / cols)
+        const u1 = u0 + (2 * f - 0.24) / cols * 0.55
+        const windowLeft = [
+          iso(x - f + 0.01, y + u0, z0),
+          iso(x - f + 0.01, y + u1, z0),
+          iso(x - f + 0.01, y + u1, z1),
+          iso(x - f + 0.01, y + u0, z1),
+        ]
+        polygon(windowLeft, 'rgba(255,255,255,0.86)')
+        const windowRight = [
+          iso(x + u0, y + f - 0.01, z0),
+          iso(x + u1, y + f - 0.01, z0),
+          iso(x + u1, y + f - 0.01, z1),
+          iso(x + u0, y + f - 0.01, z1),
+        ]
+        polygon(windowRight, 'rgba(255,255,255,0.62)')
+      }
+    }
+  }
+  // 顶面：延迟 2–3 帧盖上，带自己的 pop。
+  if (capT > 0) {
+    const capScale = easeOutBack(capT, 1.2)
+    const topPoints = [
+      iso(x - f, y - f, wallHeight),
+      iso(x + f, y - f, wallHeight),
+      iso(x + f, y + f, wallHeight),
+      iso(x - f, y + f, wallHeight),
+    ]
+    ctx.save()
+    const center = iso(x, y, wallHeight)
+    ctx.translate(center.x, center.y)
+    ctx.scale(capScale, capScale)
+    ctx.translate(-center.x, -center.y)
+    polygon(topPoints, top)
+    ctx.strokeStyle = shade(top, 0.92)
+    ctx.lineWidth = 1.5
+    ctx.beginPath()
+    ctx.moveTo(topPoints[0].x, topPoints[0].y)
+    for (let i = 1; i < topPoints.length; i += 1) ctx.lineTo(topPoints[i].x, topPoints[i].y)
+    ctx.closePath()
+    ctx.stroke()
+    ctx.restore()
+  }
+  // 地标楼顶加一圈发光窗，作为「一次 wow」。
+  if (building.landmark && growth > 0.9) {
+    const lit = clamp01((p - 0.3) / 0.2)
+    const center = iso(x, y, wallHeight)
+    ctx.globalAlpha = lit
+    ellipse(center.x, center.y, 40, 20, 'rgba(255,216,194,0.9)')
+    ctx.globalAlpha = 1
+  }
+}
+
+function drawTree(tree, p) {
+  const local = clamp01((p - 0.20 - tree.delay) / 0.12)
+  if (local <= 0) return
+  const pop = easeOutBack(local, 1.8)
+  const base = iso(tree.cx, tree.cy, 0)
+  const trunk = iso(tree.cx, tree.cy, 0.28 * pop)
+  ellipse(base.x, base.y, 14 * pop, 6 * pop, 'rgba(58,53,80,0.18)')
+  ctx.fillStyle = shade(PAL.ink, 1.4)
+  ctx.fillRect(trunk.x - 3, trunk.y, 6, 16 * pop)
+  ellipse(trunk.x, trunk.y - 6, 20 * pop, 18 * pop, PAL.grass)
+  ellipse(trunk.x - 6, trunk.y - 16, 14 * pop, 12 * pop, shade(PAL.grass, 1.08))
+}
+
+function drawCar(car, time) {
+  const travel = ((time * car.speed + car.offset) % 9) - 4.5
+  const x = car.along === 'x' ? travel : car.lane
+  const y = car.along === 'x' ? car.lane : travel
+  const ground = iso(x, y, 0.06)
+  ellipse(ground.x, ground.y, 12, 5, 'rgba(58,53,80,0.20)')
+  const bodyTop = iso(x, y, 0.32)
+  const front = iso(x + 0.14, y + 0.14, 0.32)
+  const back = iso(x - 0.14, y - 0.14, 0.32)
+  polygon(
+    [back, front, { x: front.x, y: front.y + 8 }, { x: back.x, y: back.y + 8 }],
+    car.colour,
+  )
+  polygon(
+    [front, { x: front.x + 10, y: front.y + 5 }, { x: front.x + 10, y: front.y + 13 }, { x: front.x, y: front.y + 8 }],
+    shade(car.colour, 0.8),
+  )
+  polygon(
+    [bodyTop, { x: bodyTop.x + 12, y: bodyTop.y - 6 }, { x: bodyTop.x + 22, y: bodyTop.y + 4 }, { x: bodyTop.x + 10, y: bodyTop.y + 10 }],
+    PAL.white,
+  )
+}
+
+function drawWindTurbine(time) {
+  const base = iso(3.2, -2.6, 0)
+  const hub = iso(3.2, -2.6, 2.0)
+  ellipse(base.x, base.y, 22, 9, 'rgba(58,53,80,0.16)')
+  ctx.strokeStyle = PAL.white
+  ctx.lineWidth = 5
+  ctx.beginPath()
+  ctx.moveTo(base.x, base.y)
+  ctx.lineTo(hub.x, hub.y)
+  ctx.stroke()
+  const angle = time * 1.4
+  for (let blade = 0; blade < 3; blade += 1) {
+    const theta = angle + (blade * Math.PI * 2) / 3
+    ctx.strokeStyle = PAL.white
+    ctx.lineWidth = 4
+    ctx.beginPath()
+    ctx.moveTo(hub.x, hub.y)
+    ctx.lineTo(hub.x + Math.cos(theta) * 42, hub.y + Math.sin(theta) * 42)
+    ctx.stroke()
+  }
+  ellipse(hub.x, hub.y, 6, 6, PAL.peach)
+}
+
+function drawDrone(time) {
+  const x = 2.6 * Math.cos(time * 0.5)
+  const y = 2.6 * Math.sin(time * 0.5)
+  const z = 2.6 + 0.25 * Math.sin(time * 0.9)
+  const pos = iso(x, y, z)
+  ellipse(ORIGIN.x + (x - y) * 0.866 * U, ORIGIN.y + (x + y) * 0.5 * U, 16, 6, 'rgba(58,53,80,0.12)')
+  ctx.fillStyle = PAL.white
+  ctx.fillRect(pos.x - 12, pos.y - 4, 24, 8)
+  ctx.strokeStyle = PAL.ink
+  ctx.lineWidth = 2
+  for (let rotor = 0; rotor < 4; rotor += 1) {
+    const dx = rotor < 2 ? -18 : 18
+    const dy = rotor % 2 === 0 ? -8 : 8
+    ctx.beginPath()
+    ctx.moveTo(pos.x + dx, pos.y + dy)
+    ctx.lineTo(pos.x + dx, pos.y - 3)
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.ellipse(pos.x + dx, pos.y - 3, 8, 2.5, 0, 0, Math.PI * 2)
+    ctx.stroke()
+  }
+  // 包裹
+  ctx.fillStyle = PAL.peach
+  ctx.fillRect(pos.x - 4, pos.y + 4, 8, 8)
+}
+
+function drawDataStreams(p, time) {
+  const reveal = clamp01((p - 0.42) / 0.15)
+  if (reveal <= 0) return
+  for (let pairIndex = 0; pairIndex < STREAM_PAIRS.length; pairIndex += 1) {
+    const startBuilding = BUILDINGS[STREAM_PAIRS[pairIndex][0] % BUILDINGS.length]
+    const endBuilding = BUILDINGS[STREAM_PAIRS[pairIndex][1] % BUILDINGS.length]
+    if (startBuilding === undefined || endBuilding === undefined) continue
+    const start = iso(startBuilding.cx, startBuilding.cy, startBuilding.height)
+    const end = iso(endBuilding.cx, endBuilding.cy, endBuilding.height)
+    const segments = 26
+    for (let segment = 0; segment < segments; segment += 1) {
+      const u0 = segment / segments
+      const u1 = (segment + 1) / segments
+      const point0 = {
+        x: lerp(start.x, end.x, u0),
+        y: lerp(start.y, end.y, u0) - Math.sin(Math.PI * u0) * 30,
+      }
+      const point1 = {
+        x: lerp(start.x, end.x, u1),
+        y: lerp(start.y, end.y, u1) - Math.sin(Math.PI * u1) * 30,
+      }
+      const pulse = Math.max(0, Math.sin(u0 * 9 - time * 4 + pairIndex * 1.7))
+      ctx.strokeStyle = 'rgba(184,242,230,' + (0.12 + pulse * 0.62) * reveal + ')'
+      ctx.lineWidth = 2.5
+      ctx.beginPath()
+      ctx.moveTo(point0.x, point0.y)
+      ctx.lineTo(point1.x, point1.y)
+      ctx.stroke()
+    }
+  }
+}
+
+function drawForegroundClouds(camShiftX, camScale) {
+  for (const cloud of CLOUDS_FRONT) {
+    const x = cloud.x + camShiftX * 1.25
+    const y = cloud.y + (1 - camScale) * 200
+    ctx.globalAlpha = 0.82
+    ellipse(x, y, 170 * cloud.scale, 52 * cloud.scale, PAL.white)
+    ellipse(x + 110 * cloud.scale, y - 26 * cloud.scale, 120 * cloud.scale, 40 * cloud.scale, PAL.white)
+    ellipse(x - 120 * cloud.scale, y + 6 * cloud.scale, 100 * cloud.scale, 34 * cloud.scale, PAL.white)
+    ctx.globalAlpha = 1
+  }
+}
+
+function drawTitleCard(p, time) {
+  const local = clamp01((p - 0.80) / 0.12)
+  if (local <= 0) return
+  const settle = easeOutBack(local, 1.2)
+  ctx.save()
+  ctx.translate(W / 2, 250 - (1 - settle) * 40)
+  ctx.transform(0.94, 0.24, -0.24, 0.94, 0, 0)
+  const bob = Math.sin(time * 1.8) * 3
+  ctx.translate(0, bob)
+  ctx.globalAlpha = clamp01(local * 2)
+  ctx.fillStyle = 'rgba(255,255,255,0.92)'
+  const width = 760
+  const height = 190
+  ctx.beginPath()
+  ctx.roundRect(-width / 2, -height / 2, width, height, 28)
+  ctx.fill()
+  ctx.textAlign = 'center'
+  ctx.font = '800 64px "Microsoft YaHei","SimHei",sans-serif'
+  ctx.fillStyle = PAL.ink
+  ctx.fillText(cfg.brand, 0, 8)
+  ctx.font = '500 30px "Microsoft YaHei",sans-serif'
+  ctx.fillStyle = 'rgba(58,53,80,0.72)'
+  ctx.fillText(cfg.title, 0, 56)
+  ctx.restore()
+}
+
+/* --------------------------------------------------------------- 主绘制 */
+function draw(t) {
+  const time = Math.max(0, t)
+  const p = clamp01(time / (DUR > 0 ? DUR : 1))
+
+  // 镜头：整组平移（绝不旋转）+ 片尾拉远 20%。
+  const slide = Math.sin(Math.PI * clamp01((p - 0.42) / 0.3)) * 150
+  const pullBack = easeInOutCubic(clamp01((p - 0.70) / 0.16))
+  const camScale = lerp(1, 0.74, pullBack)
+  const camShiftX = -slide
+
+  drawBackground(p, camShiftX)
+
+  ctx.save()
+  ctx.translate(W / 2 + camShiftX, H / 2)
+  ctx.scale(camScale, camScale)
+  ctx.translate(-W / 2, -H / 2)
+
+  drawIslandBase()
+  drawGroundTiles(p)
+  drawRoadMarkings()
+  // 先放一层树叶/树木的暗影，再按前后顺序画建筑与树。
+  for (const tree of TREES) drawTree(tree, p)
+  for (const building of BUILDINGS) drawBuilding(building, p, time)
+  for (const car of CARS) drawCar(car, time)
+  drawWindTurbine(time)
+  drawDrone(time)
+  drawDataStreams(p, time)
+  ctx.restore()
+
+  drawForegroundClouds(camShiftX, camScale)
+  drawTitleCard(p, time)
+}
+
+window.renderAt = async function (t) { draw(t) }
+
+/* ------------------------------------------------------------ 适配视口 */
+const stage = document.getElementById('stage')
+function fit() {
+  const scale = Math.min(window.innerWidth / W, window.innerHeight / H)
+  stage.style.transform = 'translate(-50%, -50%) scale(' + scale.toFixed(4) + ')'
+}
+fit()
+window.addEventListener('resize', fit)
+draw(0)
+</script>
+</body>
+</html>
