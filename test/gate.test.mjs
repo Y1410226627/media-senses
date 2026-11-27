@@ -429,6 +429,11 @@ await check('cutTimesFromShots drops the film start and keeps order', () => {
     { start: 1, duration: 1.5 },
   ])
   assert.deepEqual(cuts, [1, 2.5])
+  // Authored scenes carry duration but no start; the gate falls back to them when
+  // gradual transitions hide the cuts, and the alignment leg still has to work.
+  assert.deepEqual(cutTimesFromShots([{ duration: 4 }, { duration: 3 }, { duration: 5 }]), [4, 7])
+  assert.deepEqual(cutTimesFromShots([]), [])
+  assert.deepEqual(cutTimesFromShots(undefined), [])
 })
 
 await check('every leg reports a state and a human-readable detail', async () => {
