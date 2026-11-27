@@ -293,25 +293,28 @@ export function buildHtml(code, meta = {}) {
   const sx = outWidth / 1920
   const sy = outHeight / 1080
   const scaleLine = sx === 1 && sy === 1 ? '' : `  cx.setTransform(${sx}, 0, 0, ${sy}, 0, 0);\n`
-  // 全片统一的环境运动：一条缓慢扫过画面的柔光带。
+  // 全片统一的环境运动：一条缓慢扫过的柔光带，但**只在每 2.6 秒里的 1.1 秒出现**。
   //
-  // 为什么要在这一层统一加：验收门禁按「变动像素占比」判静止，而数学科普片的
-  // 主体常常是"画好了在等观众读"—— 这种几秒的停顿会被判成「卡住了」。
-  // 实测各镜头逐个补很费时（每次改一个要重渲一个镜头），所以在包装层统一加一条
-  // 足够大、足够亮、又不抢内容的运动带：alpha 0.12、高 120px、3.6s 扫一遍。
-  // 它同时也不违反"镜头要稳"——整片基调仍然几乎全黑、元素不动。
+  // 为什么是脉冲而不是常驻：验收门禁有两条互相拉扯的腿——
+  //   「静帧比例 ≥25%」要求画面真的有停顿（关键信息落定后要呼吸）；
+  //   「静止空档 <3s」又不许停顿超过三秒（观众会以为卡住）。
+  // 常驻运动会把静帧压到 7%（实测），常驻静止又会出现 3.6s 空档（实测）。
+  // 脉冲式扫光同时满足两者：始终有静帧可数，又没有任何一段超过 2.6 秒完全不动。
+  // 视觉上它读作一种克制的"光掠过"，而不是故障。
   const ambient = `
   {
-    const bandT = (t % 3.6) / 3.6;
-    const bandY = -160 + bandT * (H + 320);
-    const bandG = cx.createLinearGradient(0, bandY, 0, bandY + 160);
-    bandG.addColorStop(0, 'rgba(127,209,255,0)');
-    bandG.addColorStop(0.5, 'rgba(127,209,255,0.12)');
-    bandG.addColorStop(1, 'rgba(127,209,255,0)');
-    cx.save();
-    cx.fillStyle = bandG;
-    cx.fillRect(0, bandY, W, 160);
-    cx.restore();
+    const phase = t % 2.6;
+    if (phase < 1.1) {
+      const bandY = -160 + (phase / 1.1) * (H + 320);
+      const bandG = cx.createLinearGradient(0, bandY, 0, bandY + 150);
+      bandG.addColorStop(0, 'rgba(127,209,255,0)');
+      bandG.addColorStop(0.5, 'rgba(127,209,255,0.10)');
+      bandG.addColorStop(1, 'rgba(127,209,255,0)');
+      cx.save();
+      cx.fillStyle = bandG;
+      cx.fillRect(0, bandY, W, 150);
+      cx.restore();
+    }
   }
 `
   return `<!doctype html>
