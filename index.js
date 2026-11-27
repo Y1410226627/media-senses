@@ -34,7 +34,7 @@ import { ingestUrls } from './lib/ingest.js'
 import { buildStyleProfile } from './lib/profile.js'
 import { artifactDir, formatBytes, formatTimecode, makeWorkDir, probe, removeWorkDir, resolveTools, run, summariseProbe } from './lib/ffmpeg.js'
 import { renderAudioReport, renderFrameReport, renderProbeReport, renderVideoReport, tidy } from './lib/render.js'
-import { renderAnimateReport, renderBeatGridSection, renderBuildReport, renderChangeSection, renderCorpusReport, renderCraftSection, renderMgStylesReport, renderPixelQaSection, renderSeeReport, renderSfxReport, renderStylesReport, renderTtsReport, renderVocabularyReport } from './lib/render-v2.js'
+import { renderAnimateReport, renderBeatGridSection, renderBuildReport, renderChangeSection, renderCorpusReport, renderCheckpointSection, renderCraftSection, renderMgStylesReport, renderPixelQaSection, renderSeeReport, renderSfxReport, renderStylesReport, renderTtsReport, renderVocabularyReport } from './lib/render-v2.js'
 import { getStyle, resolveSkillDir, searchStyles, seriesOverview, starterPath } from './lib/styles.js'
 import { attachImages, detectVision, profileWidth, sampleTimes, VISION_PROFILES } from './lib/vision.js'
 import { renderCompareReport, renderFramesReport } from './lib/render-vision.js'
@@ -1068,6 +1068,12 @@ export function apply(ctx, rawConfig) {
         lint: { type: 'boolean', description: '渲染前做版式体检（文字出框/标题与字幕打架/字号过小），默认 true。' },
         aesthetic: { type: 'boolean', description: '渲染前按判例式审美准则审计计划（节奏/质感/声音/文案/流程 27 条，其中 11 条可机器判定；失败项带帧号），默认 true。' },
         timeline: { type: 'boolean', description: '额外导出可再编辑的时间线（.timeline.json + 自包含 .timeline.html 编辑器，可改文案/时长/音量后导出新 JSON 再渲），默认 false。' },
+        motion: {
+          type: 'object',
+          description: '复刻交接文档的输入（`identity` / `keepReplace` / `clipMap` / `checkpoints` / `claims` / `evidence`）。' +
+            '渲染前校验「内容超容量是否打算缩字号硬塞」这类错误，并把 `<成片名>.MOTION.md` 写到成片旁边——' +
+            '下次改版读的是这份契约，不是聊天记录。',
+        },
         targets: { type: 'object', description: '可选的对照目标（如 style-profile.json 里的 reproduction.targets），用于报告里对比差距。' },
       },
     },
@@ -1095,6 +1101,42 @@ export function apply(ctx, rawConfig) {
         plan.output = resolve(process.cwd(), plan.output)
       }
       if (Array.isArray(plan.scenes) && plan.scenes.length === 0) throw new Error('RenderPlan.scenes 为空，至少需要一个场景')
+
+      // Reproduction contract: validate the keep/replace declaration *before* the
+      // render. The rule that matters here is "content that does not fit is
+      // re-broken, never shrunk" — catching it now costs nothing; catching it after
+      // a render costs the render.
+      let motionBuilt = null
+      const motionNotes = []
+      const motionInput = isPlainObject(args.motion)
+        ? args.motion
+        : (isPlainObject(plan.motion) ? plan.motion : null)
+      if (motionInput !== null) {
+        try {
+          const { buildMotionDoc } = await import('./lib/motiondoc.js')
+          const sceneShots = Array.isArray(plan.scenes)
+            ? (() => {
+                let cursor = 0
+                return plan.scenes.map((scene) => {
+                  const shot = { start: cursor, duration: (Number(scene?.duration) || 0) + (Number(scene?.hold) || 0) }
+                  cursor += shot.duration
+                  return shot
+                })
+              })()
+            : undefined
+          motionBuilt = buildMotionDoc({
+            durationSeconds: sceneShots === undefined ? undefined : sceneShots.reduce((sum, shot) => sum + shot.duration, 0),
+            shots: sceneShots,
+            ...motionInput,
+          })
+          if (motionBuilt.errors.length > 0) {
+            motionNotes.push(`复刻交接文档有 ${motionBuilt.errors.length} 处错误：${motionBuilt.errors.slice(0, 3).join('；')}`)
+          }
+          motionNotes.push(...motionBuilt.warnings.slice(0, 4))
+        } catch (error) {
+          motionNotes.push(`复刻交接文档未生成：${error instanceof Error ? error.message : String(error)}`)
+        }
+      }
 
       // Pre-render layout audit: text overflow, caption/title collisions, type
       // below the legibility floor. Catching these before a render is the whole
@@ -1148,6 +1190,21 @@ export function apply(ctx, rawConfig) {
           notes.push(`审美准则有 ${aesthetic.failures} 条失败（见报告「审美准则」一节，逐条带帧号）`)
         }
         notes.push(...aestheticNotes)
+        notes.push(...motionNotes)
+
+        // The handover document is written next to the film: the keep/replace
+        // contract is what the *next* revision reads, and it is useless if it only
+        // exists in a chat log.
+        let motionPath = null
+        if (motionBuilt !== null) {
+          try {
+            motionPath = `${result.output.replace(/\.mp4$/iu, '')}.MOTION.md`
+            await writeFile(motionPath, motionBuilt.markdown, 'utf8')
+          } catch (error) {
+            motionPath = null
+            notes.push(`交接文档未写入：${error instanceof Error ? error.message : String(error)}`)
+          }
+        }
 
         // Editable delivery: a film you cannot re-time without a full re-render is a
         // dead end. The timeline JSON round-trips back into a RenderPlan, and the
@@ -1276,6 +1333,7 @@ export function apply(ctx, rawConfig) {
           gate_verdict: verify?.gate?.verdict ?? null,
           lint: lint === null ? null : { ok: lint.summary.ok, errors: lint.summary.errors, warnings: lint.summary.warnings, violations: lint.violations },
           timeline_files: timelineFiles,
+          motion_doc: motionBuilt === null ? null : { level: motionBuilt.level, errors: motionBuilt.errors, warnings: motionBuilt.warnings, path: motionPath },
           aesthetic: aesthetic === null ? null : {
             failures: aesthetic.failures,
             warnings: aesthetic.warnings,
@@ -2162,6 +2220,12 @@ export function apply(ctx, rawConfig) {
         include_continuity: { type: 'boolean', description: '是否判定镜头承接（切点有没有把东西带过去、像不像 PPT；默认 true，比数值对比更快）。' },
         rubric: { type: 'boolean', description: '是否附上 7 维评分卡空白表，让模型自评并给出带时间码证据的改法（默认 false）。' },
         pixel: { type: 'boolean', description: '是否在同一时刻做像素级比对（PSNR/SSIM/CIEDE2000 + 九宫格最差块），默认 true。整片数值看不出「哪里不一样」，这一项能。' },
+        checkpoints: {
+          type: 'array',
+          description: '对照检查点：`[{at, built_at?, what}]`，在**同一时刻**逐点比对，比"取一帧比平均"可执行得多。' +
+            '给了它就出「时刻 / 看什么 / 判定」表；不给则按切点自动生成。',
+          items: { type: 'object' },
+        },
         mode: { type: 'string', enum: ['auto', 'blind', 'vision'], description: '呈现模式：auto 按当前模型能力自动选择（默认）。' },
       },
       required: ['reference', 'produced'],
@@ -2251,6 +2315,50 @@ export function apply(ctx, rawConfig) {
           labels: ['参考', '成片'],
           mode: args.layout === 'side' ? 'side' : 'stack',
         })
+        // Paired checkpoints: compare the reference and the replica at the same
+        // *named* moments instead of at one arbitrary frame. "At 2.65 s the cards
+        // should be in the same place" is actionable; an average difference is not.
+        let checkpointRows = null
+        const checkpointNotes = []
+        if (Array.isArray(args.checkpoints) && args.checkpoints.length > 0) {
+          try {
+            const { decodePngPixels, comparePixels } = await import('./lib/pixelqa.js')
+            const { planCheckpoints } = await import('./lib/motiondoc.js')
+            const planned = planCheckpoints({
+              pairs: args.checkpoints.map((point) => ({
+                referenceAt: Number(point?.at ?? point?.reference_at),
+                builtAt: Number(point?.built_at ?? point?.at ?? point?.reference_at),
+                whatZh: typeof point?.what === 'string' ? point.what : '对照这一刻',
+              })),
+            })
+            checkpointRows = []
+            for (const point of planned) {
+              const refFrame = `cp-ref-${point.index}.png`
+              const builtFrame = `cp-built-${point.index}.png`
+              await run(resolved.ffmpeg, ['-v', 'error', '-nostdin', '-y', '-ss', String(point.referenceAt), '-i', reference.path, '-frames:v', '1', '-an', '-update', '1', refFrame], { cwd: workDir, timeoutMs: 120_000 })
+              await run(resolved.ffmpeg, ['-v', 'error', '-nostdin', '-y', '-ss', String(point.builtAt), '-i', produced.path, '-frames:v', '1', '-an', '-update', '1', builtFrame], { cwd: workDir, timeoutMs: 120_000 })
+              const compare = comparePixels(
+                decodePngPixels(await readFile(join(workDir, refFrame))),
+                decodePngPixels(await readFile(join(workDir, builtFrame))),
+                { cols: 3, rows: 3, maxWorstRegions: 2 },
+              )
+              checkpointRows.push({
+                index: point.index,
+                referenceAt: point.referenceAt,
+                builtAt: point.builtAt,
+                whatZh: point.whatZh,
+                verdict: compare.verdict,
+                psnr: Number.isFinite(compare.psnr) ? compare.psnr : null,
+                ssim: compare.ssim,
+                deltaE00: compare.deltaE00,
+                worst: (compare.worstRegions ?? [])[0]?.directionZh ?? null,
+              })
+            }
+          } catch (error) {
+            checkpointNotes.push(`对照检查点未跑：${error instanceof Error ? error.message : String(error)}`)
+          }
+        }
+
         const attached = await attachFor(exec, [{ path: compare.path, name: 'media-senses-compare.png', kind: 'compare' }], vision)
         // Pixel-level evidence at the sampled moment. The numeric diff above works
         // on whole-film averages and cannot say *where* two frames differ; this can.
@@ -2291,8 +2399,9 @@ export function apply(ctx, rawConfig) {
         // that each need a timecode and a numeric fix, which is what makes the
         // next revision actionable.
         let report = compareReport
+        if (checkpointRows !== null && checkpointRows.length > 0) report = `${report}\n\n${renderCheckpointSection(checkpointRows)}`
         if (pixelQa !== null) report = `${report}\n\n${renderPixelQaSection(pixelQa)}`
-        if (pixelNotes.length > 0) report = `${report}\n\n${pixelNotes.map((note) => `- ${note}`).join('\n')}`
+        for (const note of [...pixelNotes, ...checkpointNotes]) report = `${report}\n\n- ${note}`
         let rubric = null
         if (args.rubric === true) {
           try {
@@ -2312,6 +2421,7 @@ export function apply(ctx, rawConfig) {
           rows: diff.rows ?? [],
           continuity: diff.continuity ?? null,
           pixel_qa: pixelQa,
+          checkpoints: checkpointRows,
           rubric,
           compare_image: compare.path ?? null,
           images: attached.images,

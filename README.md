@@ -16,6 +16,7 @@ Windows SAPI + headless 浏览器完成——**零 npm 依赖、零云 API、默
 - **视觉适配**：有视觉能力的模型自动切到「图为主」的呈现——去字符图、给格号索引、给观察任务、按需裁剪放大
 - **声音设计**：17 种程序化合成音效（不下载任何素材），按能量峰值对齐，卡点用拍号写
 - **验收闭环**：门禁六条腿 + 判例式审美准则 + 像素级比对 + 独立终检 + 可再编辑交付
+- **复刻交接契约**：逐镜头写清「保留什么拍法、换成什么内容」，附容量上限与源时间→输出时间映射；对照片段按**同一时刻**逐点比对（吸收 OpenMotion 的 Motion.md 规格）
 
 ---
 
@@ -539,6 +540,34 @@ C 画面 / D 数据安全 / E 一致性** 五节报告。两条硬规则：
 - 报告头固定写「本报告由独立审计生成，制作者的自检不作为证据」——制作者对自己的产出有确认偏差，
   首检不能交给用户，也不能交给制作者自己。
 
+### 复刻交接文档（`media_build_video` 的 `motion`）
+
+跑到第二版就会知道缺什么：**没有地方记录哪些是刻意保留、哪些是主动替换**。于是每次改版都把整支片子
+重新吵一遍，协作者也分不清刻意与意外。`motion` 参数就是这份契约，渲染前校验、渲完写成
+`<成片名>.MOTION.md` 放在成片旁边。
+
+| 字段 | 说明 |
+|---|---|
+| `identity` | 名称、版本、作者、原始片源链接、片源版本、**逐项许可** |
+| `brandKit` | 产品事实、Logo、配色、字体、语气（换成自己产品时先补齐） |
+| `keepReplace` | **逐镜头**：`{fromSeconds, toSeconds, keepZh, useZh, capacity, overflow}` |
+| `clipMap` | `{sourceIn, sourceOut, outputIn}`：源素材时间 → 输出时间；字幕自动重建映射 |
+| `checkpoints` | `[{at, what}]`：参考片与仿制版在**同一时刻**逐点比对什么 |
+| `claims` | `[{textZh, basis}]`：每条标 **观察 / 推断 / 主动改动** |
+| `evidence` | `{level, notesZh}`：证据等级由产物按图推导，**填高了直接报错** |
+
+三条硬规则（都是踩过的坑）：
+
+1. **内容超容量只能拆分/重排受影响镜头**，或截断改写并记回文档；**缩小字号硬塞直接报错**——
+   读不清等于没写。
+2. **源时间和输出时间不是一回事**：把源片 12–18 秒放到输出 0–6 秒，源片第 15 秒的事件就落在
+   输出第 3 秒。字幕和叠层必须按映射表重建，**不能整体平移**（那只在一个片段时才对）。
+3. **证据等级只能由证据推出来**：有参考是「有参考」，有源码才是「可编辑示例」，真渲过才是
+   「已渲染改编版」，有人对照评审过才是「已评审复刻」。声明高于证据 → 报错。
+
+`media_compare` 的 `checkpoints` 就是执行这张表：每个检查点各取一帧比像素，输出
+「时刻 / 看什么 / 判定 / PSNR / SSIM / ΔE00 / 最差区块」，而不是给一个没人能据以改动的平均值。
+
 ## 4. 配置
 
 在插件面板（或 `cordis.patch.yml`）里可改：
@@ -882,7 +911,7 @@ node demo/run-demo.mjs          # 单条感知（01–05 号报告）
 ## 9. 验证
 
 ```text
-node test/run-all.mjs            # 一次跑完全部 31 个套件，打印每套真实通过项数与总计
+node test/run-all.mjs            # 一次跑完全部 32 个套件，打印每套真实通过项数与总计
 node test/shell-smoke.mjs        # 外壳：二进制探测、ffprobe、单帧分析、PNG、whisper 转写      9 项
 node test/audio-engine.test.mjs  # 音频引擎（120BPM / C大调 合成夹具，23 DSP + 32 集成）       55 项
 node test/video-engine.test.mjs  # 视频引擎（3 场景 合成夹具 + 退化用例）                      23 项
@@ -895,7 +924,7 @@ node test/htmlrender.test.mjs    # 代码动画渲染：CDP、确定性、源码
 node test/anim-runtime.test.mjs  # 运行时平权：CSS/WAAPI seek、声明式时间轴、运动模糊、页内音频  20 项
 node test/templates.test.mjs     # 10 个模板逐个真渲一遍，断言帧在动、参数生效                25 项
 node test/adapters-performance.test.mjs # Lottie/Three/Anime/自研适配器 + 角色表演规则          29 项
-node test/capability.test.mjs    # 目标能力审计：36 项能力逐条核对实现与测试                  36 项
+node test/capability.test.mjs    # 目标能力审计：37 项能力逐条核对实现与测试                  37 项
 node test/attribution.test.mjs   # 署名完整性：18 个仓库各出现一次、许可红线、落地路径存在      11 项
 node test/gate.test.mjs          # 验收门禁：节奏/静帧/爆发/空档/音频/卡点六条腿              22 项
 node test/styles-guidance.test.mjs # 风格提示词分节：不可改/可替换/禁用项（含真实库）         13 项
@@ -917,7 +946,8 @@ node test/timeline.test.mjs       # 可再编辑交付：时间线往返、离�
 node test/mgstyles.test.mjs       # 整片 MG 风格 15 套 + 3 个模板（renderAt 契约）               12 项
 node test/pagecapture.test.mjs    # 真实页面 2.5D：全页 2x、hero 4x、layout.json、CSS zoom       20 项
 node test/audio-chain.test.mjs    # 端到端：音效进混音 + 卡点对齐腿（真渲两支片子对比）             9 项
-                                   —— 合计 756 项断言，31 个套件，全部通过
+node test/motiondoc.test.mjs      # 复刻交接契约：保留/替换、剪辑映射、证据等级、检查点            29 项
+                                   —— 合计 786 项断言，32 个套件，全部通过
 ```
 
 夹具是**合成**的，因此有 ground truth 可比：音频夹具是 120 BPM、C 大调、4/4、24 秒的鼓+贝斯+旋律
