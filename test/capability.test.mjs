@@ -86,6 +86,7 @@ await row('可再编辑交付（时间线往返 + 离线 HTML）', ['lib/timelin
 await row('整片 MG 风格（15 套 + 3 个模板）', ['lib/mgstyles.js'], (m) => (m.MG_STYLE_COUNT === 15 && typeof m.mgStylePrompt === 'function' ? 2 : 0), 'test/mgstyles.test.mjs')
 await row('真实页面 2.5D 采集（CSS zoom 换算）', ['lib/pagecapture.js'], (m) => (typeof m.capturePage === 'function' && typeof m.layoutToCamera === 'function' && typeof m.planElementCutouts === 'function' ? 3 : 0), 'test/pagecapture.test.mjs')
 await row('复刻交接契约（保留/替换 + 剪辑映射 + 检查点）', ['lib/motiondoc.js'], (m) => (m.MOTION_DOC_SECTIONS.length === 9 && m.EVIDENCE_LEVELS.length === 5 && typeof m.buildMotionDoc === 'function' && typeof m.buildClipMap === 'function' && typeof m.planCheckpoints === 'function' ? 5 : 0), 'test/motiondoc.test.mjs')
+await row('原创配乐合成（拨弦/铺底/脉冲/混响 + 段落情绪）', ['lib/music.js'], (m) => (Object.keys(m.MOODS).length >= 4 && Object.keys(m.PROGRESSIONS).length >= 4 && typeof m.buildScore === 'function' && typeof m.writeScoreWav === 'function' ? 4 : 0), 'test/music.test.mjs')
 
 /* ---- 技法 ---- */
 await row('手绘/涂鸦技法（描线 + 线条沸腾）', ['assets/templates/hand-drawn-line.html'], undefined, 'test/templates.test.mjs')

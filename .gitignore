@@ -37,3 +37,9 @@ desktop.ini
 .idea/
 .vscode/
 *.log
+
+# Riemann documentary render scratch (chunks, stills, test renders)
+demo/output/riemann/_*
+demo/output/riemann/chunks/
+demo/output/riemann/clips/*.html
+demo/output/riemann/assets/*.wav

@@ -16,6 +16,7 @@ Windows SAPI + headless 浏览器完成——**零 npm 依赖、零云 API、默
 - **视觉适配**：有视觉能力的模型自动切到「图为主」的呈现——去字符图、给格号索引、给观察任务、按需裁剪放大
 - **声音设计**：17 种程序化合成音效（不下载任何素材），按能量峰值对齐，卡点用拍号写
 - **验收闭环**：门禁六条腿 + 判例式审美准则 + 像素级比对 + 独立终检 + 可再编辑交付
+- **原创配乐**：程序化合成整片配乐（拨弦 Karplus–Strong + 铺底 + 脉冲 + Schroeder 混响），按段落情绪弧排布，零素材、零许可负担、可字节级复现
 - **复刻交接契约**：逐镜头写清「保留什么拍法、换成什么内容」，附容量上限与源时间→输出时间映射；对照片段按**同一时刻**逐点比对（吸收 OpenMotion 的 Motion.md 规格）
 
 ---
@@ -568,6 +569,33 @@ C 画面 / D 数据安全 / E 一致性** 五节报告。两条硬规则：
 `media_compare` 的 `checkpoints` 就是执行这张表：每个检查点各取一帧比像素，输出
 「时刻 / 看什么 / 判定 / PSNR / SSIM / ΔE00 / 最差区块」，而不是给一个没人能据以改动的平均值。
 
+### 原创配乐（`lib/music.js`）
+
+以前要配乐就得借一个音频文件：许可要查、来源要记，而且任何人都没法复现同一支片子。
+这一版改成**自己写谱**：给段落情绪与调性，渲染出 16-bit PCM 音频。
+
+| 参数 | 说明 |
+|---|---|
+| `durationSeconds` | 总长度；一部长片一次生成（14 分钟实测 16.6 秒渲完） |
+| `mood` | `sparse` / `steady` / `driving` / `intimate`：控制配器与密度 |
+| `progression` | `cinematic`（i–VI–III–VII，悲悯里带希望）/ `contemplative` / `ascendant` / `resolve` |
+| `sections` | `[{fromSeconds,toSeconds,mood,gain}]`：让配乐跟着剪辑的情绪弧走 |
+| `tonicMidi` / `seed` | 调性中心与随机种子（同种子 → **逐位相同**的输出） |
+| `peakDb` / `reverbMix` | 峰值归一化与混响量 |
+
+声部是合成出来的，不是采样：**Karplus–Strong 拨弦**（延迟线 + 反馈低通，自带衰减，像真实弦乐）、
+**叠层铺底**（微失谐分音 + 慢起慢落）、**心跳脉冲**（下滑正弦）、**高频微光**，
+最后过 Schroeder 混响（4 梳状 + 2 全通）并做 DC 阻断。
+
+两条经验写在这里，因为都踩过：
+
+- **DC 偏移会毁掉一切测量**。混响全通级最初把「输出」写回延迟线，变成漏积分器，实测 DC 偏移 +0.128——
+  比信号自身 RMS 还大，分析器把一段铺底报成 14 Hz 频谱重心。修法是标准全通（输入/输出两条延迟线）
+  再串一个 20 Hz 一阶高通。
+- **混响里有非线性就不要指望逐帧确定性检查通过**。画布字幕用 `shadowBlur` 时，GPU 光栅化的模糊
+  每帧并不逐位一致，渲染器的确定性检查会反复比对失败并卡住；改成两层深色偏移字，
+  肉眼几乎无差、但完全确定。
+
 ## 4. 配置
 
 在插件面板（或 `cordis.patch.yml`）里可改：
@@ -911,7 +939,7 @@ node demo/run-demo.mjs          # 单条感知（01–05 号报告）
 ## 9. 验证
 
 ```text
-node test/run-all.mjs            # 一次跑完全部 32 个套件，打印每套真实通过项数与总计
+node test/run-all.mjs            # 一次跑完全部 33 个套件，打印每套真实通过项数与总计
 node test/shell-smoke.mjs        # 外壳：二进制探测、ffprobe、单帧分析、PNG、whisper 转写      9 项
 node test/audio-engine.test.mjs  # 音频引擎（120BPM / C大调 合成夹具，23 DSP + 32 集成）       55 项
 node test/video-engine.test.mjs  # 视频引擎（3 场景 合成夹具 + 退化用例）                      23 项
@@ -924,7 +952,7 @@ node test/htmlrender.test.mjs    # 代码动画渲染：CDP、确定性、源码
 node test/anim-runtime.test.mjs  # 运行时平权：CSS/WAAPI seek、声明式时间轴、运动模糊、页内音频  20 项
 node test/templates.test.mjs     # 10 个模板逐个真渲一遍，断言帧在动、参数生效                25 项
 node test/adapters-performance.test.mjs # Lottie/Three/Anime/自研适配器 + 角色表演规则          29 项
-node test/capability.test.mjs    # 目标能力审计：37 项能力逐条核对实现与测试                  37 项
+node test/capability.test.mjs    # 目标能力审计：38 项能力逐条核对实现与测试                  38 项
 node test/attribution.test.mjs   # 署名完整性：18 个仓库各出现一次、许可红线、落地路径存在      11 项
 node test/gate.test.mjs          # 验收门禁：节奏/静帧/爆发/空档/音频/卡点六条腿              22 项
 node test/styles-guidance.test.mjs # 风格提示词分节：不可改/可替换/禁用项（含真实库）         13 项
@@ -947,7 +975,8 @@ node test/mgstyles.test.mjs       # 整片 MG 风格 15 套 + 3 个模板（rend
 node test/pagecapture.test.mjs    # 真实页面 2.5D：全页 2x、hero 4x、layout.json、CSS zoom       20 项
 node test/audio-chain.test.mjs    # 端到端：音效进混音 + 卡点对齐腿（真渲两支片子对比）             9 项
 node test/motiondoc.test.mjs      # 复刻交接契约：保留/替换、剪辑映射、证据等级、检查点            29 项
-                                   —— 合计 786 项断言，32 个套件，全部通过
+node test/music.test.mjs          # 原创配乐：确定性、DC 阻断、峰值归一化、WAV 结构、段落计划       14 项
+                                   —— 合计 800 项断言，33 个套件，全部通过
 ```
 
 夹具是**合成**的，因此有 ground truth 可比：音频夹具是 120 BPM、C 大调、4/4、24 秒的鼓+贝斯+旋律
