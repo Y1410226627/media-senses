@@ -976,7 +976,7 @@ node test/pagecapture.test.mjs    # 真实页面 2.5D：全页 2x、hero 4x、la
 node test/audio-chain.test.mjs    # 端到端：音效进混音 + 卡点对齐腿（真渲两支片子对比）             9 项
 node test/motiondoc.test.mjs      # 复刻交接契约：保留/替换、剪辑映射、证据等级、检查点            29 项
 node test/music.test.mjs          # 原创配乐：确定性、DC 阻断、峰值归一化、WAV 结构、段落计划       14 项
-                                   —— 合计 800 项断言，33 个套件，全部通过
+                                   —— 合计 823 项断言，33 个套件，全部通过
 ```
 
 夹具是**合成**的，因此有 ground truth 可比：音频夹具是 120 BPM、C 大调、4/4、24 秒的鼓+贝斯+旋律

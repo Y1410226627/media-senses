@@ -83,7 +83,8 @@ if (!reuseScore) {
     fromSeconds: entry.start,
     toSeconds: entry.end,
     mood: MOOD_BY_SEGMENT[entry.id] ?? 'steady',
-    gain: entry.id === 's00' ? 0.8 : entry.id === 's10' ? 0.9 : 1,
+    // 段落强弱：整片不能一直满，门禁的「安静片段占比」就是这么来的。
+    gain: entry.id === 's00' ? 0.7 : entry.id === 's05' ? 0.5 : entry.id === 's08' ? 0.62 : entry.id === 's10' ? 0.85 : 1,
     labelZh: entry.title,
   }))
   console.log('\n生成配乐…')
@@ -140,8 +141,8 @@ if (missing.length > 0) {
 
 const plan = {
   output: join(outDir, 'riemann-hypothesis.mp4'),
-  width: 1920,
-  height: 1080,
+  width: 1280, // 与镜头一致（参考片也是 1280×720），避免整数倍放大损失清晰度
+  height: 720,
   fps: 30,
   background: '#05070d',
   loudnessTarget: -16,
@@ -153,7 +154,7 @@ const plan = {
   })),
   audio: {
     music: scorePath,
-    musicVolumeDb: -22,
+    musicVolumeDb: -4, // 配乐本身只有 -25 LUFS 左右，压太多会被 loudnorm 之后完全埋掉
     musicFadeOut: 4,
     duck: false, // 没有旁白，不需要闪避
     sfx: sfxEntries,

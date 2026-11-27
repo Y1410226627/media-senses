@@ -13,7 +13,7 @@
  *   node demo/riemann/render-chunked.mjs sieve          # 只渲指定镜头
  *   node demo/riemann/render-chunked.mjs --force sieve  # 强制重渲
  */
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { makeWorkDir, removeWorkDir, resolveTools, run } from '../../lib/ffmpeg.js'
@@ -130,10 +130,15 @@ for (const id of ids) {
     '-r', String(FPS), `${id}.mp4`,
   ]
   await run(tools.ffmpeg, concatArgs, { cwd: chunkDir, timeoutMs: 900_000 })
+  // 拼接产物写在 chunks/ 里，必须搬到 clips/ 才是镜头成品。
+  // （曾经忘搬：日志打印「✓ xxx.mp4」但 clips/ 里没有文件。）
+  const concatenated = join(chunkDir, `${id}.mp4`)
+  await cp(concatenated, output)
+  await rm(concatenated, { force: true }).catch(() => {})
   await rm(listPath, { force: true }).catch(() => {})
   for (const file of chunkFiles) await rm(file, { force: true }).catch(() => {})
 
-  const probe = await run(tools.ffprobe, ['-v', 'error', '-show_entries', 'format=duration,size', '-of', 'default=nw=1', `${id}.mp4`], { cwd: chunkDir })
+  const probe = await run(tools.ffprobe, ['-v', 'error', '-show_entries', 'format=duration,size', '-of', 'default=nw=1', output], { cwd: chunkDir })
   const duration = Number(/duration=([\d.]+)/u.exec(probe.stdout)?.[1] ?? 0)
   const size = Number(/size=(\d+)/u.exec(probe.stdout)?.[1] ?? 0)
   console.log(`  ✓ ${id}.mp4  ${duration.toFixed(2)}s  ${(size / 1024 / 1024).toFixed(1)} MB`)

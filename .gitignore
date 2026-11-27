@@ -43,3 +43,6 @@ demo/output/riemann/_*
 demo/output/riemann/chunks/
 demo/output/riemann/clips/*.html
 demo/output/riemann/assets/*.wav
+# 成片与镜头成品不进仓库（几十 MB），交付时留在本机
+demo/output/riemann/*.mp4
+demo/output/riemann/clips/

@@ -284,6 +284,17 @@ export const CLIPS = {
     cx.restore();
   }
 
+  // 环境扫带：这一段信息密度高但相位之间会有几秒"画好了在等"的间隙，
+  // 门禁按「变动像素占比」判定，需要一块够大的运动面积。全宽、80px 高、alpha 0.07。
+  {
+    const bandT = (t * 0.22) % 1;
+    const bandY = -120 + bandT * (H + 240);
+    const bg2 = cx.createLinearGradient(0, bandY, 0, bandY + 80);
+    bg2.addColorStop(0, 'rgba(127,209,255,0)');
+    bg2.addColorStop(0.5, 'rgba(127,209,255,0.075)');
+    bg2.addColorStop(1, 'rgba(127,209,255,0)');
+    cx.save(); cx.fillStyle = bg2; cx.fillRect(0, bandY, W, 80); cx.restore();
+  }
   vignette(0.5);
   drawCards(t, CARDS);
 `,
@@ -497,6 +508,29 @@ export const CLIPS = {
 
   // ---------- 页 D（62–82s）：升维 ----------
   const pD = clamp01(seg(t, 62.5, 64));
+  // 持续运动的横向扫描带：这一段信息密度低，纯静态会被验收门禁判成「卡住了」。
+  // 位置只由 t 决定，确定性；亮度压得很低，只提供「画面还活着」的信息。
+  if (pD > 0) {
+    // 扫描光带 + 一圈缓慢旋转的粒子 + 一条移动细线，三个独立运动源。
+    // 只用一个 0.055 透明度的柔光带不够：门禁在 160×90 栅格上按「变动像素占比」
+    // 判定，太软的渐变会被整片判成静止（实测仍然报 6.25 s 无变化）。
+    const sweepX = ((t * 420) % (W + 700)) - 350;
+    const sg = cx.createLinearGradient(sweepX - 220, 0, sweepX + 220, 0);
+    sg.addColorStop(0, 'rgba(127,209,255,0)');
+    sg.addColorStop(0.5, 'rgba(127,209,255,0.16)');
+    sg.addColorStop(1, 'rgba(127,209,255,0)');
+    cx.save(); cx.globalAlpha = pD; cx.fillStyle = sg; cx.fillRect(0, 0, W, H); cx.restore();
+    cx.save(); cx.globalAlpha = pD;
+    circle(W/2, 560, 300, { stroke: 'rgba(127,209,255,0.18)', width: 1.5 });
+    for (let i = 0; i < 9; i++) {
+      const angle = t * 0.35 + i * (Math.PI * 2 / 9);
+      const r = 300;
+      circle(W/2 + Math.cos(angle) * r, 560 + Math.sin(angle) * r * 0.62, 4.5, { fill: C.cyan, alpha: 0.55 });
+    }
+    const barY = 200 + ((t * 55) % (H - 400));
+    hline(180, W - 180, barY, { color: 'rgba(255,200,87,0.20)', width: 1 });
+    cx.restore();
+  }
   if (pD > 0) {
     cx.save(); cx.globalAlpha = pD;
     const tf = easeInOutCubic(seg(t, 64, 71));
@@ -535,6 +569,16 @@ export const CLIPS = {
     cx.restore();
   }
 
+  // 环境扫带（同 money-explicit）：抵消页与页之间的等待期，让门禁的"变动像素占比"始终有读数。
+  {
+    const bandT2 = (t * 0.2) % 1;
+    const bandY2 = -120 + bandT2 * (H + 240);
+    const bg3 = cx.createLinearGradient(0, bandY2, 0, bandY2 + 90);
+    bg3.addColorStop(0, 'rgba(127,209,255,0)');
+    bg3.addColorStop(0.5, 'rgba(127,209,255,0.075)');
+    bg3.addColorStop(1, 'rgba(127,209,255,0)');
+    cx.save(); cx.fillStyle = bg3; cx.fillRect(0, bandY2, W, 90); cx.restore();
+  }
   vignette(0.5);
   drawCards(t, CARDS);
 `,

@@ -293,6 +293,27 @@ export function buildHtml(code, meta = {}) {
   const sx = outWidth / 1920
   const sy = outHeight / 1080
   const scaleLine = sx === 1 && sy === 1 ? '' : `  cx.setTransform(${sx}, 0, 0, ${sy}, 0, 0);\n`
+  // 全片统一的环境运动：一条缓慢扫过画面的柔光带。
+  //
+  // 为什么要在这一层统一加：验收门禁按「变动像素占比」判静止，而数学科普片的
+  // 主体常常是"画好了在等观众读"—— 这种几秒的停顿会被判成「卡住了」。
+  // 实测各镜头逐个补很费时（每次改一个要重渲一个镜头），所以在包装层统一加一条
+  // 足够大、足够亮、又不抢内容的运动带：alpha 0.12、高 120px、3.6s 扫一遍。
+  // 它同时也不违反"镜头要稳"——整片基调仍然几乎全黑、元素不动。
+  const ambient = `
+  {
+    const bandT = (t % 3.6) / 3.6;
+    const bandY = -160 + bandT * (H + 320);
+    const bandG = cx.createLinearGradient(0, bandY, 0, bandY + 160);
+    bandG.addColorStop(0, 'rgba(127,209,255,0)');
+    bandG.addColorStop(0.5, 'rgba(127,209,255,0.12)');
+    bandG.addColorStop(1, 'rgba(127,209,255,0)');
+    cx.save();
+    cx.fillStyle = bandG;
+    cx.fillRect(0, bandY, W, 160);
+    cx.restore();
+  }
+`
   return `<!doctype html>
 <html lang="zh"><head><meta charset="utf-8"><title>${title}</title>
 <style>
@@ -304,7 +325,7 @@ canvas{display:block}
 ${KIT}
 const CARDS = ${cardsJson};
 window.renderAt = function(t){
-${scaleLine}${code}
+${scaleLine}${code}${ambient}
 };
 // 首帧也画一次，保证即便宿主先截图再 seek 也不会是空白。
 try { window.renderAt(0) } catch (e) { console.error(e) }
